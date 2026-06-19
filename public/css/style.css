@@ -617,12 +617,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ─── ANNOUNCE READY STATUS ───────────────────────────────────────────────── */
 .announce-ready-status {
-  font-size: 0.75rem;
-  color: var(--accent);
-  background: var(--accent-light);
-  border: 1px solid #C5D8EA;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #0f2a42;
+  background: #d0e4f5;
+  border: 1px solid #8ab4d4;
   border-radius: var(--radius);
-  padding: 0.25rem 0.5rem;
+  padding: 0.35rem 0.625rem;
   text-align: center;
   white-space: nowrap;
 }
