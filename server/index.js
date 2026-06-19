@@ -199,11 +199,54 @@ io.on("connection", (socket) => {
     });
   });
 
+  // ── TOGGLE ANNOUNCE READINESS ─────────────────────────────────────────────
+  socket.on("toggle_announce_ready", () => {
+    const group = gm.getGroupBySocket(socket.id);
+    if (!group || group.status !== "active") return;
+    const participant = gm.getParticipant(group, socket.id);
+    if (!participant || !participant.active) return;
+
+    gm.toggleAnnounceVote(group, socket.id);
+
+    const active = group.participants.filter((p) => p.active);
+    const needed = active.length;
+    const readyCount = gm.getAnnounceVoteCount(group);
+    const readyLabels = gm.getReadyLabels(group);
+
+    io.to(group.groupId).emit("announce_ready_update", { readyLabels, readyCount, needed });
+
+    if (readyCount >= needed) {
+      const chosen = gm.pickRandomActive(group);
+      gm.clearAnnounceVotes(group);
+
+      console.log(`[announce_ready] group=${group.groupId} chosen=${chosen.label}`);
+
+      io.to(chosen.socketId).emit("announce_rule_prompt", {});
+      active
+        .filter((p) => p.socketId !== chosen.socketId)
+        .forEach((p) => {
+          io.to(p.socketId).emit("announce_rule_waiting", { announcerLabel: chosen.label });
+        });
+    }
+  });
+
+  // ── CANCEL ANNOUNCE ───────────────────────────────────────────────────────
+  socket.on("cancel_announce", () => {
+    const group = gm.getGroupBySocket(socket.id);
+    if (!group || group.status !== "active") return;
+
+    gm.clearAnnounceVotes(group);
+    console.log(`[announce_cancelled] group=${group.groupId}`);
+    io.to(group.groupId).emit("announce_ready_reset", {});
+  });
+
   // ── ANNOUNCE RULE ─────────────────────────────────────────────────────────
   socket.on("announce_rule", ({ statedRule } = {}) => {
     const group = gm.getGroupBySocket(socket.id);
     if (!group || group.status !== "active") return;
     if (!statedRule || typeof statedRule !== "string") return;
+
+    gm.clearAnnounceVotes(group);
 
     const trimmed = statedRule.trim().slice(0, 300);
     const assessment = assessStatedRule(trimmed);

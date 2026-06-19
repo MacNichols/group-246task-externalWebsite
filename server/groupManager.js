@@ -12,7 +12,7 @@
 const { v4: uuidv4 } = require("uuid");
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const GROUP_SIZE = 3;         // participants per group
+const GROUP_SIZE = 4;         // participants per group
 const MAX_ROUNDS = 20;        // hard cap on trial rounds
 const DROPOUT_TIMEOUT_MS = 60000; // ms before absent participant is flagged
 
@@ -83,6 +83,8 @@ function tryFormGroup() {
     // pendingSubmissions: Map<socketId, { nums: [a,b,c], rationale: string }>
     // Cleared after each accepted trial.
     pendingSubmissions: new Map(),
+    // socketIds of participants who have clicked "ready to announce"
+    announceVotes: new Set(),
   };
 
   groups[groupId] = group;
@@ -228,6 +230,37 @@ function isAtRoundCap(group) {
   return group.round >= MAX_ROUNDS;
 }
 
+// ─── ANNOUNCE VOTING ──────────────────────────────────────────────────────────
+
+function toggleAnnounceVote(group, socketId) {
+  if (group.announceVotes.has(socketId)) {
+    group.announceVotes.delete(socketId);
+    return false;
+  }
+  group.announceVotes.add(socketId);
+  return true;
+}
+
+function clearAnnounceVotes(group) {
+  group.announceVotes.clear();
+}
+
+function getAnnounceVoteCount(group) {
+  return group.announceVotes.size;
+}
+
+function getReadyLabels(group) {
+  return Array.from(group.announceVotes)
+    .map((sid) => group.participants.find((p) => p.socketId === sid))
+    .filter(Boolean)
+    .map((p) => p.label);
+}
+
+function pickRandomActive(group) {
+  const active = group.participants.filter((p) => p.active);
+  return active[Math.floor(Math.random() * active.length)];
+}
+
 // ─── RULE ANNOUNCEMENT ────────────────────────────────────────────────────────
 
 function recordAnnouncement(group, statedRule, assessment) {
@@ -326,6 +359,11 @@ module.exports = {
   checkConsensus,
   recordTrial,
   isAtRoundCap,
+  toggleAnnounceVote,
+  clearAnnounceVotes,
+  getAnnounceVoteCount,
+  getReadyLabels,
+  pickRandomActive,
   recordAnnouncement,
   markComplete,
   markDisconnected,

@@ -17,6 +17,8 @@
     round: 0,
     maxRounds: 20,
     connected: false,
+    isReadyToAnnounce: false,
+    waitingForAnnouncer: false,
   };
 
   // ─── SOCKET ───────────────────────────────────────────────────────────────
@@ -61,11 +63,12 @@
     tripleSubmitBtn:document.getElementById("triple-submit-btn"),
 
     // Announce
-    announceBtn:    document.getElementById("announce-btn"),
-    announceModal:  document.getElementById("announce-modal"),
-    announceText:   document.getElementById("announce-text"),
-    announceConfirm:document.getElementById("announce-confirm"),
-    announceCancel: document.getElementById("announce-cancel"),
+    announceBtn:        document.getElementById("announce-btn"),
+    announceReadyStatus:document.getElementById("announce-ready-status"),
+    announceModal:      document.getElementById("announce-modal"),
+    announceText:       document.getElementById("announce-text"),
+    announceConfirm:    document.getElementById("announce-confirm"),
+    announceCancel:     document.getElementById("announce-cancel"),
 
     // Complete
     completeTrials: document.getElementById("complete-trials"),
@@ -344,14 +347,64 @@
   }
 
   // ─── RULE ANNOUNCEMENT ────────────────────────────────────────────────────
+
+  function resetAnnounceState() {
+    state.isReadyToAnnounce = false;
+    state.waitingForAnnouncer = false;
+    el.announceBtn.textContent = "Announce rule";
+    el.announceBtn.className = "btn-danger btn-sm";
+    el.announceBtn.disabled = false;
+    el.announceReadyStatus.style.display = "none";
+    el.announceReadyStatus.textContent = "";
+  }
+
+  // Clicking "Announce rule" toggles this participant's readiness vote
   el.announceBtn.addEventListener("click", () => {
+    if (state.waitingForAnnouncer) return;
+    socket.emit("toggle_announce_ready");
+  });
+
+  // Server broadcasts readiness vote state to all group members
+  socket.on("announce_ready_update", ({ readyLabels, readyCount, needed }) => {
+    state.isReadyToAnnounce = readyLabels.includes(state.yourLabel);
+    el.announceBtn.textContent = state.isReadyToAnnounce ? "Cancel readiness" : "Announce rule";
+    el.announceBtn.className = state.isReadyToAnnounce ? "btn-secondary btn-sm" : "btn-danger btn-sm";
+
+    if (readyCount > 0) {
+      el.announceReadyStatus.textContent = `${readyCount} / ${needed} ready to announce`;
+      el.announceReadyStatus.style.display = "block";
+    } else {
+      el.announceReadyStatus.style.display = "none";
+    }
+  });
+
+  // This participant was randomly chosen to type the rule
+  socket.on("announce_rule_prompt", () => {
+    state.waitingForAnnouncer = true;
+    el.announceReadyStatus.style.display = "none";
+    el.announceConfirm.disabled = false;
     el.announceModal.classList.add("open");
     el.announceText.focus();
+  });
+
+  // Another participant was chosen — wait for them
+  socket.on("announce_rule_waiting", ({ announcerLabel }) => {
+    state.waitingForAnnouncer = true;
+    el.announceBtn.disabled = true;
+    el.announceReadyStatus.style.display = "none";
+    appendSystemMessage(`All members ready! ${announcerLabel} has been chosen to state the rule.`);
+  });
+
+  // Chosen announcer cancelled — reset everyone
+  socket.on("announce_ready_reset", () => {
+    resetAnnounceState();
+    appendSystemMessage("The announcement was cancelled. You may continue testing.");
   });
 
   el.announceCancel.addEventListener("click", () => {
     el.announceModal.classList.remove("open");
     el.announceText.value = "";
+    socket.emit("cancel_announce");
   });
 
   el.announceConfirm.addEventListener("click", () => {
@@ -362,11 +415,12 @@
     el.announceModal.classList.remove("open");
   });
 
-  // Close modal on overlay click
+  // Close modal on overlay click (treated as cancel)
   el.announceModal.addEventListener("click", (e) => {
     if (e.target === el.announceModal) {
       el.announceModal.classList.remove("open");
       el.announceText.value = "";
+      socket.emit("cancel_announce");
     }
   });
 
