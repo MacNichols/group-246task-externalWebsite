@@ -27,6 +27,7 @@
     <div class="waiting-card">
       <h1>Waiting for participants</h1>
       <p>You will be matched with others automatically. Please keep this window open.</p>
+      <div class="waiting-team-badge" id="waiting-team-badge" style="display:none;"></div>
       <div class="participant-dots" id="dots">
         <!-- Dots rendered by JS -->
       </div>
@@ -51,8 +52,13 @@
       <div class="task-meta">
         <span class="badge" id="round-badge">Trial 0 / 20</span>
         <span class="badge" id="your-label-badge">—</span>
+        <span class="badge" id="active-count-badge" style="display:none;"></span>
+        <span class="team-badge" id="team-badge" style="display:none;"></span>
       </div>
     </div>
+
+    <!-- Turn indicator (adversarial only) -->
+    <div class="turn-indicator" id="turn-indicator" style="display:none;"></div>
 
     <!-- Feedback banner: last verdict -->
     <div class="feedback-banner" id="feedback-banner">

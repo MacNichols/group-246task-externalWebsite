@@ -3,53 +3,142 @@
  *
  * Express serves static files and a single HTML entry point.
  * Socket.io handles all real-time events: matching, chat, trials, announcements.
+ *
+ * Two waiting queues:
+ *   control     — standard 4-person groups
+ *   adversarial — requires exactly 2 blue + 2 red participants
  */
 
 const express = require("express");
-const http = require("http");
+const http    = require("http");
 const { Server } = require("socket.io");
-const path = require("path");
+const path    = require("path");
 
-const gm = require("./groupManager");
+const gm                              = require("./groupManager");
 const { evaluate, assessStatedRule, RULE_LABEL } = require("./ruleEvaluator");
-const { logSession } = require("./logger");
+const { logSession }                  = require("./logger");
 
-const PORT = process.env.PORT || 3000;
+const PORT                = process.env.PORT || 3000;
 const QUALTRICS_RETURN_URL = process.env.QUALTRICS_RETURN_URL || "";
 
 // ─── EXPRESS SETUP ────────────────────────────────────────────────────────────
 
-const app = express();
+const app    = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io     = new Server(server);
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-// Single entry point — all routing handled client-side via socket state
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-// Researcher endpoint: download today's session log
 app.get("/admin/sessions", (req, res) => {
   const adminKey = process.env.ADMIN_KEY || "researcher";
-  if (req.query.key !== adminKey) {
-    return res.status(403).send("Forbidden");
-  }
+  if (req.query.key !== adminKey) return res.status(403).send("Forbidden");
   const logPath = path.join(__dirname, "..", "logs");
-  const fs = require("fs");
+  const fs      = require("fs");
   if (!fs.existsSync(logPath)) return res.json([]);
-  const files = fs.readdirSync(logPath).filter((f) => f.endsWith(".ndjson"));
+  const files  = fs.readdirSync(logPath).filter((f) => f.endsWith(".ndjson"));
   const latest = files.sort().pop();
   if (!latest) return res.json([]);
-  const raw = fs.readFileSync(path.join(logPath, latest), "utf8");
-  const records = raw
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  const raw     = fs.readFileSync(path.join(logPath, latest), "utf8");
+  const records = raw.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
   res.json(records);
 });
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+/** Emit a targeted waiting_update to all control participants currently waiting. */
+function broadcastControlWaiting() {
+  const count = gm.getWaitingCount();
+  gm.getWaitingSocketIds().forEach((sid) => {
+    io.to(sid).emit("waiting_update", {
+      condition: "control",
+      count,
+      needed: gm.GROUP_SIZE,
+    });
+  });
+}
+
+/** Emit a targeted waiting_update to all adversarial participants currently waiting. */
+function broadcastAdversarialWaiting() {
+  const counts = gm.getAdversarialWaitingCounts();
+  gm.getAdversarialWaitingSocketIds().forEach((sid) => {
+    io.to(sid).emit("waiting_update", {
+      condition: "adversarial",
+      team:      gm.getAdversarialWaitingTeam(sid),
+      counts,
+      needed:    gm.GROUP_SIZE,
+    });
+  });
+}
+
+/** Emit group_formed to all participants of a newly formed control group. */
+function emitControlGroupFormed(group) {
+  group.participants.forEach((p) => {
+    const memberSocket = io.sockets.sockets.get(p.socketId);
+    if (memberSocket) memberSocket.join(group.groupId);
+  });
+
+  group.participants.forEach((p) => {
+    io.to(p.socketId).emit("group_formed", {
+      groupId:      group.groupId,
+      yourLabel:    p.label,
+      yourTeam:     null,
+      condition:    "control",
+      participants: group.participants.map((x) => x.label),
+      teams:        null,
+      currentTurn:  null,
+      round:        group.round,
+      trials:       group.trials,
+      chatLog:      group.chatLog,
+      maxRounds:    gm.MAX_ROUNDS,
+      activeCounts: gm.getActiveCountsByTeam(group),
+    });
+  });
+
+  console.log(`[group_formed] groupId=${group.groupId} condition=control`);
+}
+
+/** Emit group_formed to all participants of a newly formed adversarial group. */
+function emitAdversarialGroupFormed(group) {
+  group.participants.forEach((p) => {
+    const memberSocket = io.sockets.sockets.get(p.socketId);
+    if (memberSocket) memberSocket.join(group.groupId);
+  });
+
+  const teamLabels = {
+    blue: group.participants
+      .filter((x) => group.teams.blue.includes(x.socketId))
+      .map((x) => x.label),
+    red: group.participants
+      .filter((x) => group.teams.red.includes(x.socketId))
+      .map((x) => x.label),
+  };
+
+  group.participants.forEach((p) => {
+    io.to(p.socketId).emit("group_formed", {
+      groupId:      group.groupId,
+      yourLabel:    p.label,
+      yourTeam:     p.team,
+      condition:    "adversarial",
+      participants: group.participants.map((x) => x.label),
+      teams:        teamLabels,
+      currentTurn:  group.currentTurn,
+      round:        group.round,
+      trials:       group.trials,
+      chatLog:      group.chatLog,
+      maxRounds:    gm.MAX_ROUNDS,
+      activeCounts: gm.getActiveCountsByTeam(group),
+    });
+  });
+
+  console.log(
+    `[group_formed] groupId=${group.groupId} condition=adversarial ` +
+    `firstTurn=${group.currentTurn}`
+  );
+}
 
 // ─── SOCKET.IO EVENTS ─────────────────────────────────────────────────────────
 
@@ -57,40 +146,25 @@ io.on("connection", (socket) => {
   console.log(`[connect] ${socket.id}`);
 
   // ── JOIN ──────────────────────────────────────────────────────────────────
-  // Client sends { qualtricsRid } on page load
-  socket.on("join", ({ qualtricsRid } = {}) => {
-    const rid = qualtricsRid || "unknown";
-    gm.addToWaiting(socket.id, rid);
+  socket.on("join", ({ qualtricsRid, condition, team } = {}) => {
+    const rid  = qualtricsRid || "unknown";
+    const cond = condition === "adversarial" ? "adversarial" : "control";
 
-    const waiting = gm.getWaitingCount();
-    console.log(`[join] rid=${rid} waiting=${waiting}`);
+    if (cond === "adversarial") {
+      const t = (team === "blue" || team === "red") ? team : "blue";
+      gm.addToAdversarialWaiting(socket.id, rid, t);
+      console.log(`[join] rid=${rid} condition=adversarial team=${t} waiting=${JSON.stringify(gm.getAdversarialWaitingCounts())}`);
+      broadcastAdversarialWaiting();
 
-    // Broadcast updated waiting count to everyone in the waiting room
-    io.emit("waiting_update", { count: waiting, needed: gm.GROUP_SIZE });
+      const group = gm.tryFormAdversarialGroup();
+      if (group) emitAdversarialGroupFormed(group);
+    } else {
+      gm.addToWaiting(socket.id, rid);
+      console.log(`[join] rid=${rid} condition=control waiting=${gm.getWaitingCount()}`);
+      broadcastControlWaiting();
 
-    // Try to form a group
-    const group = gm.tryFormGroup();
-    if (group) {
-      // Put all members in a Socket.io room
-      group.participants.forEach((p) => {
-        const memberSocket = io.sockets.sockets.get(p.socketId);
-        if (memberSocket) memberSocket.join(group.groupId);
-      });
-
-      console.log(`[group_formed] groupId=${group.groupId}`);
-
-      // Send each participant their personal info + group start signal
-      group.participants.forEach((p) => {
-        io.to(p.socketId).emit("group_formed", {
-          groupId: group.groupId,
-          yourLabel: p.label,
-          participants: group.participants.map((x) => x.label),
-          round: group.round,
-          trials: group.trials,
-          chatLog: group.chatLog,
-          maxRounds: gm.MAX_ROUNDS,
-        });
-      });
+      const group = gm.tryFormGroup();
+      if (group) emitControlGroupFormed(group);
     }
   });
 
@@ -103,18 +177,14 @@ io.on("connection", (socket) => {
     const participant = gm.getParticipant(group, socket.id);
     if (!participant) return;
 
-    const trimmed = message.trim().slice(0, 500); // hard length limit
+    const trimmed = message.trim().slice(0, 500);
     if (!trimmed) return;
 
     const entry = gm.addChatMessage(group, participant.label, trimmed);
-
     io.to(group.groupId).emit("chat_message", entry);
   });
 
-  // ── SUBMIT TRIPLE (with rationale) ───────────────────────────────────────
-  // Each participant submits independently. The server collects submissions,
-  // then checks for consensus. The triple is only evaluated once all active
-  // participants have submitted the same triple.
+  // ── SUBMIT TRIPLE ─────────────────────────────────────────────────────────
   socket.on("submit_triple", ({ a, b, c, rationale } = {}) => {
     const group = gm.getGroupBySocket(socket.id);
     if (!group || group.status !== "active") return;
@@ -123,25 +193,31 @@ io.on("connection", (socket) => {
     const participant = gm.getParticipant(group, socket.id);
     if (!participant) return;
 
-    // Validate rationale
+    // In adversarial mode, only the active team may submit
+    if (group.condition === "adversarial") {
+      const myTeam = gm.getTeamOfSocket(group, socket.id);
+      if (myTeam !== group.currentTurn) {
+        socket.emit("submission_error", { message: "It is not your team's turn." });
+        return;
+      }
+    }
+
     const trimmedRationale = (rationale || "").trim().slice(0, 1000);
     if (!trimmedRationale) {
       socket.emit("submission_error", { message: "Please provide a rationale before submitting." });
       return;
     }
 
-    // Validate and normalise triple
     const nums = gm.normaliseTriple(a, b, c);
     if (!nums) {
       socket.emit("submission_error", { message: "Please enter three valid numbers." });
       return;
     }
 
-    // Record this participant's submission
     gm.recordSubmission(group, socket.id, nums, trimmedRationale);
 
-    const consensus = gm.checkConsensus(group);
-    const activeCount = group.participants.filter((p) => p.active).length;
+    const consensus    = gm.checkConsensus(group);
+    const activeCount  = group.participants.filter((p) => p.active).length;
 
     console.log(
       `[submission] group=${group.groupId} label=${participant.label} ` +
@@ -150,35 +226,43 @@ io.on("connection", (socket) => {
     );
 
     if (consensus.status === "waiting") {
-      // Broadcast updated count to all — no triple values revealed
-      io.to(group.groupId).emit("submission_update", {
-        submitted: consensus.submitted,
-        needed: consensus.needed,
-        yourLabel: null, // each client knows their own label already
-      });
-      // Confirm receipt to the submitter
+      // Only emit submission progress to the relevant participants
+      if (group.condition === "adversarial") {
+        group.teams[group.currentTurn].forEach((sid) => {
+          io.to(sid).emit("submission_update", {
+            submitted: consensus.submitted,
+            needed:    consensus.needed,
+          });
+        });
+      } else {
+        io.to(group.groupId).emit("submission_update", {
+          submitted: consensus.submitted,
+          needed:    consensus.needed,
+        });
+      }
       socket.emit("submission_received");
       return;
     }
 
     if (consensus.status === "mismatch") {
-      console.log(
-        `[mismatch] group=${group.groupId} triples=${JSON.stringify(consensus.triples)}`
-      );
-      // Clear all submissions so the round restarts cleanly
+      console.log(`[mismatch] group=${group.groupId} triples=${JSON.stringify(consensus.triples)}`);
       gm.clearAllSubmissions(group);
-      io.to(group.groupId).emit("submission_mismatch", {
-        message:
-          "Your group submitted different triples. Please discuss and ensure everyone submits the same triple.",
-      });
+      const mismatchMsg = {
+        message: "Your team submitted different triples. Please discuss and ensure everyone submits the same triple.",
+      };
+      if (group.condition === "adversarial") {
+        group.teams[group.currentTurn].forEach((sid) => {
+          io.to(sid).emit("submission_mismatch", mismatchMsg);
+        });
+      } else {
+        io.to(group.groupId).emit("submission_mismatch", mismatchMsg);
+      }
       return;
     }
 
     // ── CONSENSUS REACHED ─────────────────────────────────────────────────
     const evalResult = evaluate(consensus.nums[0], consensus.nums[1], consensus.nums[2]);
-
-    // evalResult.valid is always true here — nums are already validated
-    const trial = gm.recordTrial(
+    const trial      = gm.recordTrial(
       group,
       { a: consensus.nums[0], b: consensus.nums[1], c: consensus.nums[2] },
       consensus.rationales,
@@ -187,15 +271,18 @@ io.on("connection", (socket) => {
 
     console.log(
       `[trial] group=${group.groupId} round=${trial.round} ` +
-      `triple=${consensus.nums} verdict=${trial.verdict}`
+      `triple=${consensus.nums} verdict=${trial.verdict}` +
+      (group.condition === "adversarial" ? ` nextTurn=${group.currentTurn}` : "")
     );
 
     io.to(group.groupId).emit("trial_result", {
-      round: trial.round,
-      triple: trial.triple,
-      verdict: trial.verdict,
-      conforms: trial.conforms,
-      atCap: gm.isAtRoundCap(group),
+      round:        trial.round,
+      triple:       trial.triple,
+      verdict:      trial.verdict,
+      conforms:     trial.conforms,
+      atCap:        gm.isAtRoundCap(group),
+      currentTurn:  group.currentTurn,   // null for control
+      activeCounts: gm.getActiveCountsByTeam(group),
     });
   });
 
@@ -208,8 +295,7 @@ io.on("connection", (socket) => {
 
     gm.toggleAnnounceVote(group, socket.id);
 
-    const active = group.participants.filter((p) => p.active);
-    const needed = active.length;
+    const needed     = gm.announceThreshold(group);
     const readyCount = gm.getAnnounceVoteCount(group);
     const readyLabels = gm.getReadyLabels(group);
 
@@ -222,8 +308,8 @@ io.on("connection", (socket) => {
       console.log(`[announce_ready] group=${group.groupId} chosen=${chosen.label}`);
 
       io.to(chosen.socketId).emit("announce_rule_prompt", {});
-      active
-        .filter((p) => p.socketId !== chosen.socketId)
+      group.participants
+        .filter((p) => p.active && p.socketId !== chosen.socketId)
         .forEach((p) => {
           io.to(p.socketId).emit("announce_rule_waiting", { announcerLabel: chosen.label });
         });
@@ -248,7 +334,7 @@ io.on("connection", (socket) => {
 
     gm.clearAnnounceVotes(group);
 
-    const trimmed = statedRule.trim().slice(0, 300);
+    const trimmed    = statedRule.trim().slice(0, 300);
     const assessment = assessStatedRule(trimmed);
 
     gm.recordAnnouncement(group, trimmed, assessment);
@@ -259,15 +345,12 @@ io.on("connection", (socket) => {
 
     console.log(`[announced] group=${group.groupId} rule="${trimmed}" flagged=${assessment.flagged}`);
 
-    // Send each participant their personalised completion redirect
     group.participants.forEach((p) => {
-      const params = gm.summaryParams(group, p.label);
-      const returnUrl = QUALTRICS_RETURN_URL
-        ? `${QUALTRICS_RETURN_URL}?${params}`
-        : null;
+      const params     = gm.summaryParams(group, p.label);
+      const returnUrl  = QUALTRICS_RETURN_URL ? `${QUALTRICS_RETURN_URL}?${params}` : null;
 
       io.to(p.socketId).emit("task_complete", {
-        statedRule: trimmed,
+        statedRule:  trimmed,
         totalTrials: group.trials.length,
         returnUrl,
       });
@@ -278,7 +361,11 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log(`[disconnect] ${socket.id}`);
 
+    const wasAdversarialWaiting = gm.isInAdversarialWaiting(socket.id);
+
     gm.removeFromWaiting(socket.id);
+    gm.removeFromAdversarialWaiting(socket.id);
+
     const group = gm.markDisconnected(socket.id);
 
     if (group && group.status === "active") {
@@ -287,16 +374,20 @@ io.on("connection", (socket) => {
 
       io.to(group.groupId).emit("participant_dropped", {
         remaining,
-        needed: gm.GROUP_SIZE,
-        message:
-          remaining < gm.GROUP_SIZE
-            ? "A participant has disconnected. The session may not be able to continue."
-            : null,
+        needed:      gm.GROUP_SIZE,
+        message:     remaining < gm.GROUP_SIZE
+          ? "A participant has disconnected. The session may not be able to continue."
+          : null,
+        activeCounts: gm.getActiveCountsByTeam(group),
       });
     }
 
-    // Update waiting room count for everyone still waiting
-    io.emit("waiting_update", { count: gm.getWaitingCount(), needed: gm.GROUP_SIZE });
+    // Update the appropriate waiting room
+    if (wasAdversarialWaiting) {
+      broadcastAdversarialWaiting();
+    } else {
+      broadcastControlWaiting();
+    }
   });
 });
 

@@ -5,37 +5,31 @@
  * round state, trial history, chat logs, dropout detection, and
  * per-round consensus submission tracking.
  *
+ * Supports two conditions:
+ *   control     — 4 participants, unanimous consensus, majority announce vote
+ *   adversarial — 4 participants split 2v2 (blue/red), teams alternate
+ *                 proposing triples, only the active team reaches consensus,
+ *                 majority announce vote
+ *
  * State is held in-memory. Adequate for pilot studies with short sessions.
- * Replace with Redis/Postgres for production scale or crash recovery.
  */
 
 const { v4: uuidv4 } = require("uuid");
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const GROUP_SIZE = 4;         // participants per group
-const MAX_ROUNDS = 20;        // hard cap on trial rounds
-const DROPOUT_TIMEOUT_MS = 60000; // ms before absent participant is flagged
+const GROUP_SIZE = 4;
+const MAX_ROUNDS = 20;
+const DROPOUT_TIMEOUT_MS = 60000;
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-// waiting: participants not yet assigned to a group
-const waitingParticipants = [];
+const waitingParticipants    = []; // control condition
+const adversarialWaiting     = []; // adversarial condition, includes team field
+const groups                 = {};
+const socketToGroup          = {};
 
-// groups: keyed by groupId
-// {
-//   groupId, participants: [{socketId, participantId, label, qualtricsRid, joinedAt}],
-//   round: number, trials: [...], chatLog: [...],
-//   status: 'active'|'announced'|'complete',
-//   ruleAnnouncement: string|null, createdAt
-// }
-const groups = {};
-
-// socketId → groupId index for fast lookup
-const socketToGroup = {};
-
-// ─── WAITING ROOM ─────────────────────────────────────────────────────────────
+// ─── WAITING ROOM — CONTROL ───────────────────────────────────────────────────
 
 function addToWaiting(socketId, qualtricsRid) {
-  // Avoid duplicates (reconnect edge case)
   if (waitingParticipants.find((p) => p.socketId === socketId)) return;
   waitingParticipants.push({ socketId, qualtricsRid, joinedAt: Date.now() });
 }
@@ -45,53 +39,125 @@ function removeFromWaiting(socketId) {
   if (idx !== -1) waitingParticipants.splice(idx, 1);
 }
 
-function getWaitingCount() {
-  return waitingParticipants.length;
-}
+function getWaitingCount() { return waitingParticipants.length; }
 
-/**
- * Attempt to assemble a group from waiting participants.
- * Returns the new group object if successful, null otherwise.
- */
+function getWaitingSocketIds() { return waitingParticipants.map((p) => p.socketId); }
+
 function tryFormGroup() {
   if (waitingParticipants.length < GROUP_SIZE) return null;
 
   const members = waitingParticipants.splice(0, GROUP_SIZE);
   const groupId = uuidv4();
-  const labels = ["A", "B", "C", "D", "E"].slice(0, GROUP_SIZE);
+  const labels  = ["A", "B", "C", "D"].slice(0, GROUP_SIZE);
 
   const participants = members.map((m, i) => ({
-    socketId: m.socketId,
+    socketId:      m.socketId,
     participantId: uuidv4(),
-    label: `Participant ${labels[i]}`,
-    qualtricsRid: m.qualtricsRid,
-    joinedAt: m.joinedAt,
-    active: true,
-    lastSeen: Date.now(),
+    label:         `Participant ${labels[i]}`,
+    team:          null,
+    qualtricsRid:  m.qualtricsRid,
+    joinedAt:      m.joinedAt,
+    active:        true,
+    lastSeen:      Date.now(),
   }));
 
   const group = {
     groupId,
     participants,
-    round: 0,
-    trials: [],            // { round, triple, rationales, verdict, conforms, timestamp }
-    chatLog: [],           // { round, label, message, timestamp }
-    status: "active",
-    ruleAnnouncement: null,
-    createdAt: Date.now(),
-    // Per-round consensus tracking.
-    // pendingSubmissions: Map<socketId, { nums: [a,b,c], rationale: string }>
-    // Cleared after each accepted trial.
+    round:             0,
+    trials:            [],
+    chatLog:           [],
+    status:            "active",
+    ruleAnnouncement:  null,
+    createdAt:         Date.now(),
     pendingSubmissions: new Map(),
-    // socketIds of participants who have clicked "ready to announce"
-    announceVotes: new Set(),
+    announceVotes:      new Set(),
+    condition:         "control",
+    teams:             null,
+    currentTurn:       null,
   };
 
   groups[groupId] = group;
-  participants.forEach((p) => {
-    socketToGroup[p.socketId] = groupId;
-  });
+  participants.forEach((p) => { socketToGroup[p.socketId] = groupId; });
+  return group;
+}
 
+// ─── WAITING ROOM — ADVERSARIAL ───────────────────────────────────────────────
+
+function addToAdversarialWaiting(socketId, qualtricsRid, team) {
+  if (adversarialWaiting.find((p) => p.socketId === socketId)) return;
+  adversarialWaiting.push({ socketId, qualtricsRid, team, joinedAt: Date.now() });
+}
+
+function removeFromAdversarialWaiting(socketId) {
+  const idx = adversarialWaiting.findIndex((p) => p.socketId === socketId);
+  if (idx !== -1) adversarialWaiting.splice(idx, 1);
+}
+
+function isInAdversarialWaiting(socketId) {
+  return adversarialWaiting.some((p) => p.socketId === socketId);
+}
+
+function getAdversarialWaitingCounts() {
+  return {
+    blue: adversarialWaiting.filter((p) => p.team === "blue").length,
+    red:  adversarialWaiting.filter((p) => p.team === "red").length,
+  };
+}
+
+function getAdversarialWaitingSocketIds() {
+  return adversarialWaiting.map((p) => p.socketId);
+}
+
+function getAdversarialWaitingTeam(socketId) {
+  const entry = adversarialWaiting.find((p) => p.socketId === socketId);
+  return entry ? entry.team : null;
+}
+
+function tryFormAdversarialGroup() {
+  const blues = adversarialWaiting.filter((p) => p.team === "blue");
+  const reds  = adversarialWaiting.filter((p) => p.team === "red");
+  if (blues.length < 2 || reds.length < 2) return null;
+
+  const chosen = [...blues.slice(0, 2), ...reds.slice(0, 2)];
+  chosen.forEach((m) => removeFromAdversarialWaiting(m.socketId));
+
+  const groupId = uuidv4();
+  const labels  = ["A", "B", "C", "D"];
+
+  const participants = chosen.map((m, i) => ({
+    socketId:      m.socketId,
+    participantId: uuidv4(),
+    label:         `Participant ${labels[i]}`,
+    team:          m.team,
+    qualtricsRid:  m.qualtricsRid,
+    joinedAt:      m.joinedAt,
+    active:        true,
+    lastSeen:      Date.now(),
+  }));
+
+  const blueSocketIds = chosen.filter((m) => m.team === "blue").map((m) => m.socketId);
+  const redSocketIds  = chosen.filter((m) => m.team === "red").map((m)  => m.socketId);
+  const currentTurn   = Math.random() < 0.5 ? "blue" : "red";
+
+  const group = {
+    groupId,
+    participants,
+    round:             0,
+    trials:            [],
+    chatLog:           [],
+    status:            "active",
+    ruleAnnouncement:  null,
+    createdAt:         Date.now(),
+    pendingSubmissions: new Map(),
+    announceVotes:      new Set(),
+    condition:         "adversarial",
+    teams:             { blue: blueSocketIds, red: redSocketIds },
+    currentTurn,
+  };
+
+  groups[groupId] = group;
+  participants.forEach((p) => { socketToGroup[p.socketId] = groupId; });
   return group;
 }
 
@@ -102,107 +168,102 @@ function getGroupBySocket(socketId) {
   return groupId ? groups[groupId] : null;
 }
 
-function getGroup(groupId) {
-  return groups[groupId] || null;
-}
+function getGroup(groupId) { return groups[groupId] || null; }
 
 function getParticipant(group, socketId) {
   return group.participants.find((p) => p.socketId === socketId) || null;
 }
 
+function getTeamOfSocket(group, socketId) {
+  if (!group.teams) return null;
+  if (group.teams.blue.includes(socketId)) return "blue";
+  if (group.teams.red.includes(socketId))  return "red";
+  return null;
+}
+
+// ─── ACTIVE COUNTS ────────────────────────────────────────────────────────────
+
+function getActiveCountsByTeam(group) {
+  const total = group.participants.filter((p) => p.active).length;
+  const max   = group.participants.length;
+  if (group.condition !== "adversarial") {
+    return { total, max };
+  }
+  return {
+    blue:  group.participants.filter((p) => p.active && group.teams.blue.includes(p.socketId)).length,
+    red:   group.participants.filter((p) => p.active && group.teams.red.includes(p.socketId)).length,
+    max:   2,
+    total,
+  };
+}
+
 // ─── CHAT ─────────────────────────────────────────────────────────────────────
 
 function addChatMessage(group, label, message) {
-  const entry = {
-    round: group.round,
-    label,
-    message,
-    timestamp: Date.now(),
-  };
+  const entry = { round: group.round, label, message, timestamp: Date.now() };
   group.chatLog.push(entry);
   return entry;
 }
 
 // ─── CONSENSUS SUBMISSIONS ────────────────────────────────────────────────────
 
-/**
- * Normalise a triple to a canonical [a, b, c] number array.
- * Returns null if any value is not a finite number.
- */
 function normaliseTriple(a, b, c) {
   const nums = [a, b, c].map(Number);
   if (nums.some((n) => !isFinite(n))) return null;
   return nums;
 }
 
-/**
- * Record one participant's submission for the current round.
- * Returns the updated submission count.
- */
 function recordSubmission(group, socketId, nums, rationale) {
   group.pendingSubmissions.set(socketId, { nums, rationale });
   return group.pendingSubmissions.size;
 }
 
-/**
- * Remove a participant's pending submission (e.g. to allow resubmission).
- */
 function clearSubmission(group, socketId) {
   group.pendingSubmissions.delete(socketId);
 }
 
-/**
- * Clear all pending submissions for the round (after acceptance or reset).
- */
 function clearAllSubmissions(group) {
   group.pendingSubmissions.clear();
 }
 
 /**
- * Check the current submission state for the group.
- * Returns one of three outcomes:
- *
- *   { status: 'waiting',  submitted: N, needed: M }
- *     — not everyone has submitted yet
- *
- *   { status: 'mismatch', submitted: N, needed: M, triples: [...] }
- *     — everyone submitted but triples differ
- *
- *   { status: 'consensus', nums: [a,b,c], rationales: Map<label, string> }
- *     — everyone submitted the same triple; ready to evaluate
+ * In control mode: all active participants must submit the same triple.
+ * In adversarial mode: only the active team's members must agree.
  */
 function checkConsensus(group) {
-  const active = group.participants.filter((p) => p.active);
-  const needed  = active.length;
-  const submitted = group.pendingSubmissions.size;
+  let activePlayers;
+  if (group.condition === "adversarial") {
+    const teamSids = group.teams[group.currentTurn];
+    activePlayers = group.participants.filter(
+      (p) => p.active && teamSids.includes(p.socketId)
+    );
+  } else {
+    activePlayers = group.participants.filter((p) => p.active);
+  }
+
+  const needed    = activePlayers.length;
+  const submitted = activePlayers.filter((p) =>
+    group.pendingSubmissions.has(p.socketId)
+  ).length;
 
   if (submitted < needed) {
     return { status: "waiting", submitted, needed };
   }
 
-  // Everyone has submitted — check agreement
-  const allNums = Array.from(group.pendingSubmissions.values()).map((s) => s.nums);
+  const allNums   = activePlayers.map((p) => group.pendingSubmissions.get(p.socketId).nums);
   const reference = allNums[0];
-  const allMatch = allNums.every(
+  const allMatch  = allNums.every(
     (n) => n[0] === reference[0] && n[1] === reference[1] && n[2] === reference[2]
   );
 
   if (!allMatch) {
-    // Build a readable list of what each person submitted (for server log),
-    // but we do NOT send individual values to clients — only the mismatch signal.
-    return {
-      status: "mismatch",
-      submitted,
-      needed,
-      triples: allNums,
-    };
+    return { status: "mismatch", submitted, needed, triples: allNums };
   }
 
-  // Build rationale map keyed by participant label
   const rationales = {};
-  for (const [socketId, sub] of group.pendingSubmissions.entries()) {
-    const participant = active.find((p) => p.socketId === socketId);
-    if (participant) rationales[participant.label] = sub.rationale;
+  for (const p of activePlayers) {
+    const sub = group.pendingSubmissions.get(p.socketId);
+    if (sub) rationales[p.label] = sub.rationale;
   }
 
   return { status: "consensus", nums: reference, rationales };
@@ -212,23 +273,29 @@ function checkConsensus(group) {
 
 function recordTrial(group, triple, rationales, evaluationResult) {
   group.round += 1;
+
   const entry = {
-    round: group.round,
+    round:    group.round,
     triple,
-    rationales,   // { "Participant A": "...", "Participant B": "..." }
-    verdict: evaluationResult.verdict,
+    rationales,
+    verdict:  evaluationResult.verdict,
     conforms: evaluationResult.conforms,
-    nums: evaluationResult.nums,
+    nums:     evaluationResult.nums,
     timestamp: Date.now(),
   };
+
+  // Flip turn after each trial in adversarial mode
+  if (group.condition === "adversarial") {
+    entry.proposingTeam = group.currentTurn;
+    group.currentTurn   = group.currentTurn === "blue" ? "red" : "blue";
+  }
+
   group.trials.push(entry);
   clearAllSubmissions(group);
   return entry;
 }
 
-function isAtRoundCap(group) {
-  return group.round >= MAX_ROUNDS;
-}
+function isAtRoundCap(group) { return group.round >= MAX_ROUNDS; }
 
 // ─── ANNOUNCE VOTING ──────────────────────────────────────────────────────────
 
@@ -241,13 +308,9 @@ function toggleAnnounceVote(group, socketId) {
   return true;
 }
 
-function clearAnnounceVotes(group) {
-  group.announceVotes.clear();
-}
+function clearAnnounceVotes(group) { group.announceVotes.clear(); }
 
-function getAnnounceVoteCount(group) {
-  return group.announceVotes.size;
-}
+function getAnnounceVoteCount(group) { return group.announceVotes.size; }
 
 function getReadyLabels(group) {
   return Array.from(group.announceVotes)
@@ -261,6 +324,12 @@ function pickRandomActive(group) {
   return active[Math.floor(Math.random() * active.length)];
 }
 
+/** Strictly more than half of active participants. */
+function announceThreshold(group) {
+  const active = group.participants.filter((p) => p.active).length;
+  return Math.floor(active / 2) + 1;
+}
+
 // ─── RULE ANNOUNCEMENT ────────────────────────────────────────────────────────
 
 function recordAnnouncement(group, statedRule, assessment) {
@@ -268,13 +337,13 @@ function recordAnnouncement(group, statedRule, assessment) {
   group.ruleAnnouncement = {
     statedRule,
     assessment,
-    round: group.round,
+    round:     group.round,
     timestamp: Date.now(),
   };
 }
 
 function markComplete(group) {
-  group.status = "complete";
+  group.status      = "complete";
   group.completedAt = Date.now();
 }
 
@@ -286,7 +355,7 @@ function markDisconnected(socketId) {
 
   const participant = getParticipant(group, socketId);
   if (participant) {
-    participant.active = false;
+    participant.active         = false;
     participant.disconnectedAt = Date.now();
   }
 
@@ -300,76 +369,94 @@ function activeParticipantCount(group) {
 
 // ─── SESSION EXPORT ───────────────────────────────────────────────────────────
 
-/**
- * Produce a complete session record for logging/export.
- */
 function exportSession(group) {
   return {
-    groupId: group.groupId,
-    createdAt: group.createdAt,
-    completedAt: group.completedAt || null,
-    status: group.status,
-    groupSize: group.participants.length,
-    participants: group.participants.map((p) => ({
-      label: p.label,
-      qualtricsRid: p.qualtricsRid,
+    groupId:           group.groupId,
+    createdAt:         group.createdAt,
+    completedAt:       group.completedAt || null,
+    status:            group.status,
+    condition:         group.condition,
+    groupSize:         group.participants.length,
+    participants:      group.participants.map((p) => ({
+      label:         p.label,
+      team:          p.team,
+      qualtricsRid:  p.qualtricsRid,
       participantId: p.participantId,
-      active: p.active,
+      active:        p.active,
     })),
-    totalTrials: group.trials.length,
-    trials: group.trials,
-    ruleAnnouncement: group.ruleAnnouncement || null,
-    chatLog: group.chatLog,
+    totalTrials:       group.trials.length,
+    trials:            group.trials,
+    ruleAnnouncement:  group.ruleAnnouncement || null,
+    chatLog:           group.chatLog,
   };
 }
 
 // ─── SUMMARY PARAMS (for Qualtrics redirect) ──────────────────────────────────
 
-/**
- * Produce URL query params to pass back to Qualtrics on completion.
- */
 function summaryParams(group, participantLabel) {
-  const correct =
-    group.ruleAnnouncement && !group.ruleAnnouncement.assessment.flagged;
+  const correct = group.ruleAnnouncement && !group.ruleAnnouncement.assessment.flagged;
   return new URLSearchParams({
-    task_complete: "1",
+    task_complete:     "1",
     participant_label: participantLabel,
-    total_trials: group.trials.length,
-    rule_stated: group.ruleAnnouncement
+    total_trials:      group.trials.length,
+    rule_stated:       group.ruleAnnouncement
       ? encodeURIComponent(group.ruleAnnouncement.statedRule)
       : "",
     rule_correct_flag: correct ? "1" : "0",
-    group_id: group.groupId,
+    group_id:          group.groupId,
+    condition:         group.condition,
   }).toString();
 }
 
 module.exports = {
+  // Control waiting
   addToWaiting,
   removeFromWaiting,
   getWaitingCount,
+  getWaitingSocketIds,
   tryFormGroup,
+  // Adversarial waiting
+  addToAdversarialWaiting,
+  removeFromAdversarialWaiting,
+  isInAdversarialWaiting,
+  getAdversarialWaitingCounts,
+  getAdversarialWaitingSocketIds,
+  getAdversarialWaitingTeam,
+  tryFormAdversarialGroup,
+  // Group lookups
   getGroupBySocket,
   getGroup,
   getParticipant,
+  getTeamOfSocket,
+  getActiveCountsByTeam,
+  // Chat
   addChatMessage,
+  // Submissions
   normaliseTriple,
   recordSubmission,
   clearSubmission,
   clearAllSubmissions,
   checkConsensus,
+  // Trials
   recordTrial,
   isAtRoundCap,
+  // Announce voting
   toggleAnnounceVote,
   clearAnnounceVotes,
   getAnnounceVoteCount,
   getReadyLabels,
   pickRandomActive,
+  announceThreshold,
+  // Completion
   recordAnnouncement,
   markComplete,
+  // Dropout
   markDisconnected,
   activeParticipantCount,
+  // Export
   exportSession,
   summaryParams,
+  // Constants
   GROUP_SIZE,
   MAX_ROUNDS,
 };
