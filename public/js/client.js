@@ -247,13 +247,21 @@
     addChatMessage(label, message);
   });
 
+  function getTeamForLabel(label) {
+    if (state.condition !== "adversarial" || !state.teams) return null;
+    if (state.teams.blue.includes(label)) return "blue";
+    if (state.teams.red.includes(label))  return "red";
+    return null;
+  }
+
   function addChatMessage(label, message) {
     const isSelf = label === state.yourLabel;
     const div    = document.createElement("div");
     div.className = "chat-message" + (isSelf ? " self" : "");
 
     const labelEl = document.createElement("div");
-    labelEl.className   = "msg-label";
+    const team    = getTeamForLabel(label);
+    labelEl.className   = "msg-label" + (team ? " team-" + team : "");
     labelEl.textContent = label;
 
     const textEl = document.createElement("div");

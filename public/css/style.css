@@ -313,6 +313,8 @@ small { font-size: 0.8125rem; color: var(--text-3); }
   border-color: #C5D8EA;
 }
 .chat-message.system .msg-label { color: var(--text-3); }
+.chat-message .msg-label.team-blue { color: var(--blue-team); }
+.chat-message .msg-label.team-red  { color: var(--red-team); }
 .chat-message.system .msg-text {
   background: transparent;
   border: none;
