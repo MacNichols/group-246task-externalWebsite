@@ -157,13 +157,37 @@ small { font-size: 0.8125rem; color: var(--text-3); }
 
 .task-instructions {
   margin-top: 0.75rem;
-  padding: 0.75rem 1rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: 0.8125rem;
   color: var(--text-2);
   line-height: 1.6;
+}
+.task-instructions summary {
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  user-select: none;
+}
+.task-instructions summary::-webkit-details-marker { display: none; }
+.task-instructions summary::before {
+  content: "▸";
+  font-size: 0.75rem;
+  transition: transform 0.15s ease;
+}
+.task-instructions[open] summary::before {
+  transform: rotate(90deg);
+}
+.task-instructions-body {
+  padding: 0 1rem 0.75rem 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.625rem;
 }
 
 .task-meta {
