@@ -147,7 +147,7 @@
 
       el.waitingStatus.innerHTML =
         `<span class="pulse-ring"></span>` +
-        `Left Brain <strong>${counts.blue}/1</strong> · Right Brain <strong>${counts.red}/1</strong> — waiting for your partner.`;
+        `Left Brain <strong>${Math.min(counts.blue, 1)}/1</strong> · Right Brain <strong>${Math.min(counts.red, 1)}/1</strong> — waiting for your partner.`;
     } else {
       el.waitingTeamBadge.style.display = "none";
       el.dots.innerHTML = "";
