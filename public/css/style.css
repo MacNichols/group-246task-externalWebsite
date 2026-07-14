@@ -708,10 +708,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   background: #fff8e6;
   border-top: 2px solid #e6a817;
   color: #7a4f00;
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-size: 0.9375rem;
+  font-weight: 700;
   line-height: 1.5;
 }
+
+/* ─── TEAM ASSIGNMENT INDICATOR ──────────────────────────────────────────── */
+.team-assignment-indicator {
+  margin-top: 0.625rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.team-assignment-indicator.team-badge-blue { color: var(--blue-team); }
+.team-assignment-indicator.team-badge-red  { color: var(--red-team); }
 
 /* ─── ANNOUNCE READY STATUS ───────────────────────────────────────────────── */
 .announce-ready-status {

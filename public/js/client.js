@@ -63,8 +63,9 @@
     feedbackBanner:      document.getElementById("feedback-banner"),
 
     // History
-    historyList:         document.getElementById("history-list"),
-    adversarialMessage:  document.getElementById("adversarial-message"),
+    historyList:              document.getElementById("history-list"),
+    adversarialMessage:       document.getElementById("adversarial-message"),
+    teamAssignmentIndicator:  document.getElementById("team-assignment-indicator"),
 
     // Chat
     chatMessages:        document.getElementById("chat-messages"),
@@ -185,6 +186,9 @@
     if (condition === "adversarial") {
       renderTeamBadge(yourTeam);
       el.adversarialMessage.style.display = "block";
+      el.teamAssignmentIndicator.textContent = "You are: " + teamDisplayName(yourTeam);
+      el.teamAssignmentIndicator.className   = "team-assignment-indicator team-badge-" + yourTeam;
+      el.teamAssignmentIndicator.style.display = "block";
     }
 
     trials.forEach(addHistoryItem);
