@@ -12,7 +12,7 @@
 
   // ─── HELPERS ──────────────────────────────────────────────────────────────
   function teamDisplayName(team) {
-    return team === "blue" ? "Left Brain" : "Right Brain";
+    return team === "blue" ? "Symmetrical Brainstem" : "Asymmetrical Brainstem";
   }
 
   // ─── STATE ────────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@
       renderTeamBadge(yourTeam);
       el.teamAssignmentIndicator.textContent =
         `You are ${teamDisplayName(yourTeam)} Dominant. ` +
-        `Left brain individuals are more likely to succeed on this task than right brain individuals.`;
+        `Symmetrical brainstem individuals are more likely to succeed on this task than asymmetrical brainstem individuals.`;
       el.teamAssignmentIndicator.className     = "team-assignment-indicator team-badge-" + yourTeam;
       el.teamAssignmentIndicator.style.display = "block";
     }
