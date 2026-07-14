@@ -180,7 +180,9 @@
     if (condition === "adversarial") {
       renderTeamBadge(yourTeam);
       el.teamAssignmentIndicator.textContent =
-        `You have a ${teamDisplayName(yourTeam)}. ` +
+        (yourTeam === "blue"
+          ? "You have a symmetrical brainstem. "
+          : "You have an asymmetrical brainstem. ") +
         `Symmetrical brainstem individuals are more likely to succeed on this task than asymmetrical brainstem individuals.`;
       el.teamAssignmentIndicator.className     = "team-assignment-indicator team-badge-" + yourTeam;
       el.teamAssignmentIndicator.style.display = "block";
