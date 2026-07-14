@@ -136,7 +136,8 @@ io.on("connection", (socket) => {
     const cond = condition === "adversarial" ? "adversarial" : "control";
 
     if (cond === "adversarial") {
-      const t = (team === "blue" || team === "red") ? team : "blue";
+      const teamMap = { left: "blue", right: "red" };
+      const t = teamMap[team] || "blue";
       gm.addToAdversarialWaiting(socket.id, rid, t);
       console.log(`[join] rid=${rid} condition=adversarial team=${t} waiting=${JSON.stringify(gm.getAdversarialWaitingCounts())}`);
       broadcastAdversarialWaiting();
