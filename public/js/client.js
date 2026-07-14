@@ -109,11 +109,6 @@
     state.yourTeam     = params.get("team") || null;
 
     showScreen("waiting");
-    socket.emit("join", {
-      qualtricsRid: state.qualtricsRid,
-      condition:    state.condition,
-      team:         state.yourTeam,
-    });
 
     if (state.qualtricsRid !== "unknown") {
       el.sessionLabel.textContent = `ID: ${state.qualtricsRid}`;
@@ -514,7 +509,16 @@
   });
 
   // ─── CONNECTION LIFECYCLE ─────────────────────────────────────────────────
-  socket.on("connect",    () => { state.connected = true; });
+  socket.on("connect", () => {
+    state.connected = true;
+    if (!state.groupId) {
+      socket.emit("join", {
+        qualtricsRid: state.qualtricsRid,
+        condition:    state.condition,
+        team:         state.yourTeam,
+      });
+    }
+  });
   socket.on("disconnect", () => {
     state.connected = false;
     if (state.groupId) appendSystemMessage("Connection lost. Please refresh the page.");

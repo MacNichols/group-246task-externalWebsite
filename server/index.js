@@ -142,11 +142,11 @@ io.on("connection", (socket) => {
       console.log(`[join] rid=${rid} condition=adversarial team=${t} waiting=${JSON.stringify(gm.getAdversarialWaitingCounts())}`);
       broadcastAdversarialWaiting();
 
-      const group = gm.tryFormAdversarialGroup();
-      if (group) {
-        emitAdversarialGroupFormed(group);
-        broadcastAdversarialWaiting(); // update any remaining waiters with corrected counts
+      let formed;
+      while ((formed = gm.tryFormAdversarialGroup()) !== null) {
+        emitAdversarialGroupFormed(formed);
       }
+      broadcastAdversarialWaiting(); // update any remaining waiters with corrected counts
     } else {
       gm.addToWaiting(socket.id, rid);
       console.log(`[join] rid=${rid} condition=control waiting=${gm.getWaitingCount()}`);
