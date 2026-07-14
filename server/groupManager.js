@@ -1,31 +1,25 @@
 /**
  * Group Manager
  *
- * Handles all group state: waiting room assembly, participant tracking,
- * round state, trial history, chat logs, dropout detection, and
- * per-round consensus submission tracking.
- *
  * Supports two conditions:
- *   control     — 4 participants, unanimous consensus, majority announce vote
- *   adversarial — 4 participants split 2v2 (blue/red), teams alternate
- *                 proposing triples, only the active team reaches consensus,
- *                 majority announce vote
- *
- * State is held in-memory. Adequate for pilot studies with short sessions.
+ *   control     — 4 participants, all must agree on each triple, majority announce vote
+ *   adversarial — 1 left-brain + 1 right-brain pair, same consensus rules as control,
+ *                 majority announce vote (both must agree)
  */
 
 const { v4: uuidv4 } = require("uuid");
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const GROUP_SIZE = 4;
-const MAX_ROUNDS = 20;
-const DROPOUT_TIMEOUT_MS = 60000;
+const GROUP_SIZE             = 4;   // control condition
+const ADVERSARIAL_GROUP_SIZE = 2;   // adversarial condition (1 left + 1 right)
+const MAX_ROUNDS             = 20;
+const DROPOUT_TIMEOUT_MS     = 60000;
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-const waitingParticipants    = []; // control condition
-const adversarialWaiting     = []; // adversarial condition, includes team field
-const groups                 = {};
-const socketToGroup          = {};
+const waitingParticipants = [];   // control condition
+const adversarialWaiting  = [];   // adversarial condition, includes team field
+const groups              = {};
+const socketToGroup       = {};
 
 // ─── WAITING ROOM — CONTROL ───────────────────────────────────────────────────
 
@@ -39,8 +33,7 @@ function removeFromWaiting(socketId) {
   if (idx !== -1) waitingParticipants.splice(idx, 1);
 }
 
-function getWaitingCount() { return waitingParticipants.length; }
-
+function getWaitingCount()     { return waitingParticipants.length; }
 function getWaitingSocketIds() { return waitingParticipants.map((p) => p.socketId); }
 
 function tryFormGroup() {
@@ -64,17 +57,16 @@ function tryFormGroup() {
   const group = {
     groupId,
     participants,
-    round:             0,
-    trials:            [],
-    chatLog:           [],
-    status:            "active",
-    ruleAnnouncement:  null,
-    createdAt:         Date.now(),
+    round:              0,
+    trials:             [],
+    chatLog:            [],
+    status:             "active",
+    ruleAnnouncement:   null,
+    createdAt:          Date.now(),
     pendingSubmissions: new Map(),
     announceVotes:      new Set(),
-    condition:         "control",
-    teams:             null,
-    currentTurn:       null,
+    condition:          "control",
+    teams:              null,
   };
 
   groups[groupId] = group;
@@ -114,16 +106,17 @@ function getAdversarialWaitingTeam(socketId) {
   return entry ? entry.team : null;
 }
 
+/** Forms a pair: exactly 1 left-brain (blue) + 1 right-brain (red). */
 function tryFormAdversarialGroup() {
   const blues = adversarialWaiting.filter((p) => p.team === "blue");
   const reds  = adversarialWaiting.filter((p) => p.team === "red");
-  if (blues.length < 2 || reds.length < 2) return null;
+  if (blues.length < 1 || reds.length < 1) return null;
 
-  const chosen = [...blues.slice(0, 2), ...reds.slice(0, 2)];
+  const chosen = [blues[0], reds[0]];
   chosen.forEach((m) => removeFromAdversarialWaiting(m.socketId));
 
   const groupId = uuidv4();
-  const labels  = ["A", "B", "C", "D"];
+  const labels  = ["A", "B"];
 
   const participants = chosen.map((m, i) => ({
     socketId:      m.socketId,
@@ -136,24 +129,22 @@ function tryFormAdversarialGroup() {
     lastSeen:      Date.now(),
   }));
 
-  const blueSocketIds = chosen.filter((m) => m.team === "blue").map((m) => m.socketId);
-  const redSocketIds  = chosen.filter((m) => m.team === "red").map((m)  => m.socketId);
-  const currentTurn   = Math.random() < 0.5 ? "blue" : "red";
-
   const group = {
     groupId,
     participants,
-    round:             0,
-    trials:            [],
-    chatLog:           [],
-    status:            "active",
-    ruleAnnouncement:  null,
-    createdAt:         Date.now(),
+    round:              0,
+    trials:             [],
+    chatLog:            [],
+    status:             "active",
+    ruleAnnouncement:   null,
+    createdAt:          Date.now(),
     pendingSubmissions: new Map(),
     announceVotes:      new Set(),
-    condition:         "adversarial",
-    teams:             { blue: blueSocketIds, red: redSocketIds },
-    currentTurn,
+    condition:          "adversarial",
+    teams: {
+      blue: [chosen[0].socketId],
+      red:  [chosen[1].socketId],
+    },
   };
 
   groups[groupId] = group;
@@ -192,7 +183,7 @@ function getActiveCountsByTeam(group) {
   return {
     blue:  group.participants.filter((p) => p.active && group.teams.blue.includes(p.socketId)).length,
     red:   group.participants.filter((p) => p.active && group.teams.red.includes(p.socketId)).length,
-    max:   2,
+    max:   1,
     total,
   };
 }
@@ -226,31 +217,17 @@ function clearAllSubmissions(group) {
   group.pendingSubmissions.clear();
 }
 
-/**
- * In control mode: all active participants must submit the same triple.
- * In adversarial mode: only the active team's members must agree.
- */
+/** All active participants must submit the same triple (both conditions). */
 function checkConsensus(group) {
-  let activePlayers;
-  if (group.condition === "adversarial") {
-    const teamSids = group.teams[group.currentTurn];
-    activePlayers = group.participants.filter(
-      (p) => p.active && teamSids.includes(p.socketId)
-    );
-  } else {
-    activePlayers = group.participants.filter((p) => p.active);
-  }
-
-  const needed    = activePlayers.length;
-  const submitted = activePlayers.filter((p) =>
-    group.pendingSubmissions.has(p.socketId)
-  ).length;
+  const active   = group.participants.filter((p) => p.active);
+  const needed   = active.length;
+  const submitted = active.filter((p) => group.pendingSubmissions.has(p.socketId)).length;
 
   if (submitted < needed) {
     return { status: "waiting", submitted, needed };
   }
 
-  const allNums   = activePlayers.map((p) => group.pendingSubmissions.get(p.socketId).nums);
+  const allNums   = active.map((p) => group.pendingSubmissions.get(p.socketId).nums);
   const reference = allNums[0];
   const allMatch  = allNums.every(
     (n) => n[0] === reference[0] && n[1] === reference[1] && n[2] === reference[2]
@@ -261,7 +238,7 @@ function checkConsensus(group) {
   }
 
   const rationales = {};
-  for (const p of activePlayers) {
+  for (const p of active) {
     const sub = group.pendingSubmissions.get(p.socketId);
     if (sub) rationales[p.label] = sub.rationale;
   }
@@ -273,23 +250,15 @@ function checkConsensus(group) {
 
 function recordTrial(group, triple, rationales, evaluationResult) {
   group.round += 1;
-
   const entry = {
-    round:    group.round,
+    round:     group.round,
     triple,
     rationales,
-    verdict:  evaluationResult.verdict,
-    conforms: evaluationResult.conforms,
-    nums:     evaluationResult.nums,
+    verdict:   evaluationResult.verdict,
+    conforms:  evaluationResult.conforms,
+    nums:      evaluationResult.nums,
     timestamp: Date.now(),
   };
-
-  // Flip turn after each trial in adversarial mode
-  if (group.condition === "adversarial") {
-    entry.proposingTeam = group.currentTurn;
-    group.currentTurn   = group.currentTurn === "blue" ? "red" : "blue";
-  }
-
   group.trials.push(entry);
   clearAllSubmissions(group);
   return entry;
@@ -308,9 +277,8 @@ function toggleAnnounceVote(group, socketId) {
   return true;
 }
 
-function clearAnnounceVotes(group) { group.announceVotes.clear(); }
-
-function getAnnounceVoteCount(group) { return group.announceVotes.size; }
+function clearAnnounceVotes(group)      { group.announceVotes.clear(); }
+function getAnnounceVoteCount(group)    { return group.announceVotes.size; }
 
 function getReadyLabels(group) {
   return Array.from(group.announceVotes)
@@ -371,27 +339,27 @@ function activeParticipantCount(group) {
 
 function exportSession(group) {
   return {
-    groupId:           group.groupId,
-    createdAt:         group.createdAt,
-    completedAt:       group.completedAt || null,
-    status:            group.status,
-    condition:         group.condition,
-    groupSize:         group.participants.length,
-    participants:      group.participants.map((p) => ({
+    groupId:          group.groupId,
+    createdAt:        group.createdAt,
+    completedAt:      group.completedAt || null,
+    status:           group.status,
+    condition:        group.condition,
+    groupSize:        group.participants.length,
+    participants:     group.participants.map((p) => ({
       label:         p.label,
       team:          p.team,
       qualtricsRid:  p.qualtricsRid,
       participantId: p.participantId,
       active:        p.active,
     })),
-    totalTrials:       group.trials.length,
-    trials:            group.trials,
-    ruleAnnouncement:  group.ruleAnnouncement || null,
-    chatLog:           group.chatLog,
+    totalTrials:      group.trials.length,
+    trials:           group.trials,
+    ruleAnnouncement: group.ruleAnnouncement || null,
+    chatLog:          group.chatLog,
   };
 }
 
-// ─── SUMMARY PARAMS (for Qualtrics redirect) ──────────────────────────────────
+// ─── SUMMARY PARAMS ───────────────────────────────────────────────────────────
 
 function summaryParams(group, participantLabel) {
   const correct = group.ruleAnnouncement && !group.ruleAnnouncement.assessment.flagged;
@@ -458,5 +426,6 @@ module.exports = {
   summaryParams,
   // Constants
   GROUP_SIZE,
+  ADVERSARIAL_GROUP_SIZE,
   MAX_ROUNDS,
 };

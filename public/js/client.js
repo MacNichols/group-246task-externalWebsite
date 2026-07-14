@@ -1,14 +1,19 @@
 /**
  * Client — 2-4-6 Task
  *
- * Manages socket events, UI state transitions, and all DOM interactions.
  * Supports two conditions passed via URL params:
  *   control     — ?rid=...
  *   adversarial — ?rid=...&condition=adversarial&team=blue|red
+ *                 ("blue" = Left Brain, "red" = Right Brain)
  */
 
 (function () {
   "use strict";
+
+  // ─── HELPERS ──────────────────────────────────────────────────────────────
+  function teamDisplayName(team) {
+    return team === "blue" ? "Left Brain" : "Right Brain";
+  }
 
   // ─── STATE ────────────────────────────────────────────────────────────────
   const state = {
@@ -18,8 +23,7 @@
     groupId:             null,
     yourLabel:           null,
     participants:        [],
-    teams:               null,      // { blue: [labels], red: [labels] }
-    currentTurn:         null,      // "blue" | "red" | null
+    teams:               null,   // { blue: [labels], red: [labels] }
     round:               0,
     maxRounds:           20,
     connected:           false,
@@ -39,40 +43,41 @@
 
   const el = {
     // Waiting
-    waitingTeamBadge: document.getElementById("waiting-team-badge"),
-    dots:             document.getElementById("dots"),
-    waitingStatus:    document.getElementById("waiting-status"),
+    waitingTeamBadge:    document.getElementById("waiting-team-badge"),
+    dots:                document.getElementById("dots"),
+    waitingStatus:       document.getElementById("waiting-status"),
 
     // Header
-    sessionLabel:     document.getElementById("session-label"),
+    sessionLabel:        document.getElementById("session-label"),
 
     // Task top
-    roundBadge:       document.getElementById("round-badge"),
-    yourLabelBadge:   document.getElementById("your-label-badge"),
-    activeCountBadge: document.getElementById("active-count-badge"),
-    teamBadge:        document.getElementById("team-badge"),
+    roundBadge:          document.getElementById("round-badge"),
+    yourLabelBadge:      document.getElementById("your-label-badge"),
+    activeCountBadge:    document.getElementById("active-count-badge"),
+    teamBadge:           document.getElementById("team-badge"),
 
     // Turn indicator
-    turnIndicator:    document.getElementById("turn-indicator"),
+    turnIndicator:       document.getElementById("turn-indicator"),
 
     // Feedback banner
-    feedbackBanner:   document.getElementById("feedback-banner"),
+    feedbackBanner:      document.getElementById("feedback-banner"),
 
     // History
-    historyList:      document.getElementById("history-list"),
+    historyList:         document.getElementById("history-list"),
+    adversarialMessage:  document.getElementById("adversarial-message"),
 
     // Chat
-    chatMessages:     document.getElementById("chat-messages"),
-    chatInput:        document.getElementById("chat-input"),
-    chatSendBtn:      document.getElementById("chat-send-btn"),
+    chatMessages:        document.getElementById("chat-messages"),
+    chatInput:           document.getElementById("chat-input"),
+    chatSendBtn:         document.getElementById("chat-send-btn"),
 
     // Triple inputs
-    tripleA:          document.getElementById("triple-a"),
-    tripleB:          document.getElementById("triple-b"),
-    tripleC:          document.getElementById("triple-c"),
-    rationaleInput:   document.getElementById("rationale-input"),
-    submissionStatus: document.getElementById("submission-status"),
-    tripleSubmitBtn:  document.getElementById("triple-submit-btn"),
+    tripleA:             document.getElementById("triple-a"),
+    tripleB:             document.getElementById("triple-b"),
+    tripleC:             document.getElementById("triple-c"),
+    rationaleInput:      document.getElementById("rationale-input"),
+    submissionStatus:    document.getElementById("submission-status"),
+    tripleSubmitBtn:     document.getElementById("triple-submit-btn"),
 
     // Announce
     announceBtn:         document.getElementById("announce-btn"),
@@ -83,10 +88,10 @@
     announceCancel:      document.getElementById("announce-cancel"),
 
     // Complete
-    completeTrials:  document.getElementById("complete-trials"),
-    completeRule:    document.getElementById("complete-rule"),
-    returnBtn:       document.getElementById("return-btn"),
-    redirectNotice:  document.getElementById("redirect-notice"),
+    completeTrials:      document.getElementById("complete-trials"),
+    completeRule:        document.getElementById("complete-rule"),
+    returnBtn:           document.getElementById("return-btn"),
+    redirectNotice:      document.getElementById("redirect-notice"),
   };
 
   // ─── SCREEN TRANSITIONS ───────────────────────────────────────────────────
@@ -119,32 +124,30 @@
   socket.on("waiting_update", ({ condition, count, needed, counts, team }) => {
     if (condition === "adversarial") {
       // Show team badge
-      el.waitingTeamBadge.textContent = team === "blue" ? "Blue Team" : "Red Team";
-      el.waitingTeamBadge.className   = "team-badge team-badge-" + team;
-      el.waitingTeamBadge.style.display = "inline-flex";
+      el.waitingTeamBadge.textContent    = teamDisplayName(team);
+      el.waitingTeamBadge.className      = "team-badge team-badge-" + team;
+      el.waitingTeamBadge.style.display  = "inline-flex";
 
-      // Render two sets of dots separated by a divider
+      // Two dots: 1 blue slot + 1 red slot
       el.dots.innerHTML = "";
-      for (let i = 0; i < 2; i++) {
-        const dot = document.createElement("div");
-        dot.className = "dot dot-blue" + (i < counts.blue ? " filled" : "");
-        if (team === "blue" && i === counts.blue - 1 && !state.groupId) dot.classList.add("you");
-        el.dots.appendChild(dot);
-      }
+      const blueDot = document.createElement("div");
+      blueDot.className = "dot dot-blue" + (counts.blue > 0 ? " filled" : "");
+      if (team === "blue" && !state.groupId) blueDot.classList.add("you");
+      el.dots.appendChild(blueDot);
+
       const sep = document.createElement("span");
-      sep.className = "dot-sep";
+      sep.className   = "dot-sep";
       sep.textContent = "·";
       el.dots.appendChild(sep);
-      for (let i = 0; i < 2; i++) {
-        const dot = document.createElement("div");
-        dot.className = "dot dot-red" + (i < counts.red ? " filled" : "");
-        if (team === "red" && i === counts.red - 1 && !state.groupId) dot.classList.add("you");
-        el.dots.appendChild(dot);
-      }
+
+      const redDot = document.createElement("div");
+      redDot.className = "dot dot-red" + (counts.red > 0 ? " filled" : "");
+      if (team === "red" && !state.groupId) redDot.classList.add("you");
+      el.dots.appendChild(redDot);
 
       el.waitingStatus.innerHTML =
         `<span class="pulse-ring"></span>` +
-        `Blue <strong>${counts.blue}/2</strong> · Red <strong>${counts.red}/2</strong> — waiting for a full group.`;
+        `Left Brain <strong>${counts.blue}/1</strong> · Right Brain <strong>${counts.red}/1</strong> — waiting for your partner.`;
     } else {
       el.waitingTeamBadge.style.display = "none";
       el.dots.innerHTML = "";
@@ -163,7 +166,7 @@
   // ─── GROUP FORMED ─────────────────────────────────────────────────────────
   socket.on("group_formed", ({
     groupId, yourLabel, yourTeam, condition, participants,
-    teams, currentTurn, round, trials, chatLog, maxRounds, activeCounts,
+    teams, round, trials, chatLog, maxRounds, activeCounts,
   }) => {
     state.groupId      = groupId;
     state.yourLabel    = yourLabel;
@@ -171,20 +174,17 @@
     state.condition    = condition;
     state.participants = participants;
     state.teams        = teams;
-    state.currentTurn  = currentTurn;
     state.round        = round;
     state.maxRounds    = maxRounds;
 
     el.yourLabelBadge.textContent = yourLabel;
     el.roundBadge.textContent     = `Trial ${round} / ${maxRounds}`;
 
-    // Active participant display
     updateActiveCountDisplay(activeCounts);
 
-    // Team badge + turn indicator (adversarial only)
     if (condition === "adversarial") {
       renderTeamBadge(yourTeam);
-      updateTurnUI(currentTurn);
+      el.adversarialMessage.style.display = "block";
     }
 
     trials.forEach(addHistoryItem);
@@ -195,39 +195,29 @@
     el.chatInput.focus();
   });
 
-  // ─── TEAM / TURN UI ───────────────────────────────────────────────────────
+  // ─── TEAM UI ──────────────────────────────────────────────────────────────
   function renderTeamBadge(team) {
-    el.teamBadge.textContent    = team === "blue" ? "Blue Team" : "Red Team";
-    el.teamBadge.className      = "team-badge team-badge-" + team;
-    el.teamBadge.style.display  = "inline-flex";
-  }
-
-  function updateTurnUI(currentTurn) {
-    const isMyTurn = currentTurn === state.yourTeam;
-    const teamName = currentTurn === "blue" ? "Blue" : "Red";
-
-    el.turnIndicator.className    = "turn-indicator turn-" + currentTurn;
-    el.turnIndicator.style.display = "flex";
-
-    if (isMyTurn) {
-      el.turnIndicator.textContent = "Your team's turn to propose a triple.";
-      setSubmitLocked(false);
-      clearSubmissionStatus();
-    } else {
-      el.turnIndicator.textContent = `${teamName} team's turn to propose a triple.`;
-      setSubmitLocked(true);
-      showSubmissionStatus("waiting-others", `Waiting for the ${teamName} team to propose…`);
-    }
+    el.teamBadge.textContent   = teamDisplayName(team);
+    el.teamBadge.className     = "team-badge team-badge-" + team;
+    el.teamBadge.style.display = "inline-flex";
   }
 
   function updateActiveCountDisplay(activeCounts) {
     if (!activeCounts) return;
     if (state.condition === "adversarial") {
-      el.activeCountBadge.textContent = `Blue ${activeCounts.blue}/2 · Red ${activeCounts.red}/2`;
+      el.activeCountBadge.textContent =
+        `Left Brain ${activeCounts.blue}/1 · Right Brain ${activeCounts.red}/1`;
     } else {
       el.activeCountBadge.textContent = `${activeCounts.total} / ${activeCounts.max} active`;
     }
     el.activeCountBadge.style.display = "inline-flex";
+  }
+
+  function getTeamForLabel(label) {
+    if (state.condition !== "adversarial" || !state.teams) return null;
+    if (state.teams.blue.includes(label)) return "blue";
+    if (state.teams.red.includes(label))  return "red";
+    return null;
   }
 
   // ─── CHAT ─────────────────────────────────────────────────────────────────
@@ -247,24 +237,17 @@
     addChatMessage(label, message);
   });
 
-  function getTeamForLabel(label) {
-    if (state.condition !== "adversarial" || !state.teams) return null;
-    if (state.teams.blue.includes(label)) return "blue";
-    if (state.teams.red.includes(label))  return "red";
-    return null;
-  }
-
   function addChatMessage(label, message) {
-    const isSelf = label === state.yourLabel;
-    const div    = document.createElement("div");
+    const isSelf  = label === state.yourLabel;
+    const div     = document.createElement("div");
     div.className = "chat-message" + (isSelf ? " self" : "");
 
-    const labelEl = document.createElement("div");
-    const team    = getTeamForLabel(label);
+    const labelEl   = document.createElement("div");
+    const team      = getTeamForLabel(label);
     labelEl.className   = "msg-label" + (team ? " team-" + team : "");
     labelEl.textContent = label;
 
-    const textEl = document.createElement("div");
+    const textEl    = document.createElement("div");
     textEl.className   = "msg-text";
     textEl.textContent = message;
 
@@ -322,16 +305,16 @@
     }
 
     setSubmitLocked(true);
-    showSubmissionStatus("waiting-self", "Submission received. Waiting for your team to submit…");
+    showSubmissionStatus("waiting-self", "Submission received. Waiting for all group members to submit…");
     socket.emit("submit_triple", { a, b, c, rationale });
   }
 
   function setSubmitLocked(locked) {
-    el.tripleA.disabled          = locked;
-    el.tripleB.disabled          = locked;
-    el.tripleC.disabled          = locked;
-    el.rationaleInput.disabled   = locked;
-    el.tripleSubmitBtn.disabled  = locked;
+    el.tripleA.disabled         = locked;
+    el.tripleB.disabled         = locked;
+    el.tripleC.disabled         = locked;
+    el.rationaleInput.disabled  = locked;
+    el.tripleSubmitBtn.disabled = locked;
   }
 
   function resetSubmissionForm() {
@@ -345,9 +328,9 @@
   }
 
   function showSubmissionStatus(type, message) {
-    el.submissionStatus.textContent    = message;
-    el.submissionStatus.className      = "submission-status " + type;
-    el.submissionStatus.style.display  = "block";
+    el.submissionStatus.textContent   = message;
+    el.submissionStatus.className     = "submission-status " + type;
+    el.submissionStatus.style.display = "block";
   }
 
   function clearSubmissionStatus() {
@@ -363,7 +346,7 @@
   socket.on("submission_update", ({ submitted, needed }) => {
     showSubmissionStatus(
       "waiting-others",
-      `Waiting for all team members to submit the same triple — ${submitted} of ${needed} submitted.`
+      `Waiting for all members to submit the same triple — ${submitted} of ${needed} submitted.`
     );
   });
 
@@ -378,21 +361,14 @@
     showSubmissionStatus("error", message);
   });
 
-  socket.on("trial_result", ({ round, triple, verdict, conforms, atCap, currentTurn, activeCounts }) => {
+  socket.on("trial_result", ({ round, triple, verdict, conforms, atCap, activeCounts }) => {
     state.round = round;
     el.roundBadge.textContent = `Trial ${round} / ${state.maxRounds}`;
 
-    // Reset form, then re-apply turn lock if adversarial
     resetSubmissionForm();
-
-    if (state.condition === "adversarial" && currentTurn !== null) {
-      state.currentTurn = currentTurn;
-      updateTurnUI(currentTurn);
-    }
 
     if (activeCounts) updateActiveCountDisplay(activeCounts);
 
-    // Update feedback banner
     const banner = el.feedbackBanner;
     banner.className = "feedback-banner verdict-" + verdict.toLowerCase();
     banner.innerHTML =
@@ -416,7 +392,7 @@
     const empty = el.historyList.querySelector(".history-empty");
     if (empty) empty.remove();
 
-    const item = document.createElement("div");
+    const item     = document.createElement("div");
     item.className = "history-item " + (conforms ? "yes" : "no");
 
     const roundEl  = document.createElement("span");
@@ -469,16 +445,16 @@
   });
 
   socket.on("announce_rule_prompt", () => {
-    state.waitingForAnnouncer    = true;
+    state.waitingForAnnouncer            = true;
     el.announceReadyStatus.style.display = "none";
-    el.announceConfirm.disabled  = false;
+    el.announceConfirm.disabled          = false;
     el.announceModal.classList.add("open");
     el.announceText.focus();
   });
 
   socket.on("announce_rule_waiting", ({ announcerLabel }) => {
-    state.waitingForAnnouncer  = true;
-    el.announceBtn.disabled    = true;
+    state.waitingForAnnouncer            = true;
+    el.announceBtn.disabled              = true;
     el.announceReadyStatus.style.display = "none";
     appendSystemMessage(`Majority reached! ${announcerLabel} has been chosen to state the rule.`);
   });
@@ -534,8 +510,7 @@
   });
 
   // ─── CONNECTION LIFECYCLE ─────────────────────────────────────────────────
-  socket.on("connect", () => { state.connected = true; });
-
+  socket.on("connect",    () => { state.connected = true; });
   socket.on("disconnect", () => {
     state.connected = false;
     if (state.groupId) appendSystemMessage("Connection lost. Please refresh the page.");

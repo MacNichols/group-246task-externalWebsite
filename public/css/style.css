@@ -701,25 +701,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   margin: 0 0.25rem;
 }
 
-/* ─── TURN INDICATOR ──────────────────────────────────────────────────────── */
-.turn-indicator {
-  padding: 0.5rem 1.75rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
+/* ─── ADVERSARIAL MESSAGE ────────────────────────────────────────────────── */
+.adversarial-message {
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-}
-.turn-blue {
-  background: var(--blue-team-bg);
-  color: var(--blue-team);
-  border-color: var(--blue-team-border);
-}
-.turn-red {
-  background: var(--red-team-bg);
-  color: var(--red-team);
-  border-color: var(--red-team-border);
+  padding: 0.75rem 1rem;
+  background: #fff8e6;
+  border-top: 2px solid #e6a817;
+  color: #7a4f00;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 /* ─── ANNOUNCE READY STATUS ───────────────────────────────────────────────── */
