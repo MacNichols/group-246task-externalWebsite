@@ -21,6 +21,10 @@ const adversarialWaiting  = [];   // adversarial condition, includes team field
 const groups              = {};
 const socketToGroup       = {};
 
+// Running pair-type counts for balanced matching
+let homogeneousPairsFormed   = 0;
+let heterogeneousPairsFormed = 0;
+
 // ─── WAITING ROOM — CONTROL ───────────────────────────────────────────────────
 
 function addToWaiting(socketId, qualtricsRid) {
@@ -106,14 +110,53 @@ function getAdversarialWaitingTeam(socketId) {
   return entry ? entry.team : null;
 }
 
-/** Forms a pair: exactly 1 left-brain (blue) + 1 right-brain (red). */
+/**
+ * Forms a pair of two adversarial participants.
+ * Prioritises the pair type (homogeneous vs heterogeneous) that is currently
+ * underrepresented so the dataset stays balanced across session lifetime.
+ *
+ * Homogeneous  — both symmetrical (blue) or both asymmetrical (red)
+ * Heterogeneous — one of each
+ */
 function tryFormAdversarialGroup() {
   const blues = adversarialWaiting.filter((p) => p.team === "blue");
   const reds  = adversarialWaiting.filter((p) => p.team === "red");
-  if (blues.length < 1 || reds.length < 1) return null;
 
-  const chosen = [blues[0], reds[0]];
+  const canFormHomogeneous   = blues.length >= 2 || reds.length >= 2;
+  const canFormHeterogeneous = blues.length >= 1 && reds.length >= 1;
+
+  if (!canFormHomogeneous && !canFormHeterogeneous) return null;
+
+  // Prefer whichever type is currently underrepresented (ties go to homogeneous)
+  const preferHomogeneous = homogeneousPairsFormed <= heterogeneousPairsFormed;
+
+  let chosen;
+  let pairType;
+
+  if (preferHomogeneous && canFormHomogeneous) {
+    // Pick the larger pool to keep wait times short
+    if (blues.length >= 2 && (blues.length >= reds.length || reds.length < 2)) {
+      chosen = [blues[0], blues[1]];
+    } else {
+      chosen = [reds[0], reds[1]];
+    }
+    pairType = "homogeneous";
+  } else if (!preferHomogeneous && canFormHeterogeneous) {
+    chosen   = [blues[0], reds[0]];
+    pairType = "heterogeneous";
+  } else if (canFormHeterogeneous) {
+    chosen   = [blues[0], reds[0]];
+    pairType = "heterogeneous";
+  } else {
+    // Only homogeneous is possible
+    chosen   = blues.length >= 2 ? [blues[0], blues[1]] : [reds[0], reds[1]];
+    pairType = "homogeneous";
+  }
+
   chosen.forEach((m) => removeFromAdversarialWaiting(m.socketId));
+
+  if (pairType === "homogeneous") homogeneousPairsFormed++;
+  else                            heterogeneousPairsFormed++;
 
   const groupId = uuidv4();
   const labels  = ["A", "B"];
@@ -141,15 +184,20 @@ function tryFormAdversarialGroup() {
     pendingSubmissions: new Map(),
     announceVotes:      new Set(),
     condition:          "adversarial",
+    pairType,
     teams: {
-      blue: [chosen[0].socketId],
-      red:  [chosen[1].socketId],
+      blue: chosen.filter((m) => m.team === "blue").map((m) => m.socketId),
+      red:  chosen.filter((m) => m.team === "red").map((m) => m.socketId),
     },
   };
 
   groups[groupId] = group;
   participants.forEach((p) => { socketToGroup[p.socketId] = groupId; });
   return group;
+}
+
+function getPairTypeCounts() {
+  return { homogeneous: homogeneousPairsFormed, heterogeneous: heterogeneousPairsFormed };
 }
 
 // ─── GROUP LOOKUPS ────────────────────────────────────────────────────────────
@@ -181,10 +229,13 @@ function getActiveCountsByTeam(group) {
     return { total, max };
   }
   return {
-    blue:  group.participants.filter((p) => p.active && group.teams.blue.includes(p.socketId)).length,
-    red:   group.participants.filter((p) => p.active && group.teams.red.includes(p.socketId)).length,
-    max:   1,
+    blue:     group.participants.filter((p) => p.active && group.teams.blue.includes(p.socketId)).length,
+    red:      group.participants.filter((p) => p.active && group.teams.red.includes(p.socketId)).length,
+    blueMax:  group.teams.blue.length,
+    redMax:   group.teams.red.length,
     total,
+    max,
+    pairType: group.pairType,
   };
 }
 
@@ -344,6 +395,7 @@ function exportSession(group) {
     completedAt:      group.completedAt || null,
     status:           group.status,
     condition:        group.condition,
+    pairType:         group.pairType || null,
     groupSize:        group.participants.length,
     participants:     group.participants.map((p) => ({
       label:         p.label,
@@ -391,6 +443,7 @@ module.exports = {
   getAdversarialWaitingSocketIds,
   getAdversarialWaitingTeam,
   tryFormAdversarialGroup,
+  getPairTypeCounts,
   // Group lookups
   getGroupBySocket,
   getGroup,

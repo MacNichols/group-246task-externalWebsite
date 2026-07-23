@@ -44,7 +44,8 @@
     <div class="task-top">
       <div class="task-top-left">
         <h2>Hypothesis Testing Task</h2>
-        <p>
+        <div class="team-assignment-indicator" id="team-assignment-indicator" style="display:none;"></div>
+        <p class="task-rule-prompt">
           The triple <strong>2, 4, 6</strong> follows a rule.
           Propose triples to test your hypothesis, then announce the rule when your group is confident.
         </p>
@@ -56,7 +57,6 @@
             As a team, you have to agree on each set of three numbers to write down, but you do not necessarily have to have the same reasons for agreeing to this choice. After everyone agrees on the triplet to submit, you will receive feedback indicating whether or not the triplet you entered does or doesn't conform to the rule. Good luck!
           </div>
         </details>
-        <div class="team-assignment-indicator" id="team-assignment-indicator" style="display:none;"></div>
       </div>
       <div class="task-meta">
         <span class="badge" id="round-badge">Trial 0 / 20</span>
@@ -163,6 +163,10 @@
         <div class="summary-row">
           <span class="label">Rule stated</span>
           <span class="value" id="complete-rule">—</span>
+        </div>
+        <div class="summary-row">
+          <span class="label">True rule</span>
+          <span class="value" id="complete-true-rule">—</span>
         </div>
       </div>
 

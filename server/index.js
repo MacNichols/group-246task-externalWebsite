@@ -122,7 +122,7 @@ function emitAdversarialGroupFormed(group) {
     });
   });
 
-  console.log(`[group_formed] groupId=${group.groupId} condition=adversarial`);
+  console.log(`[group_formed] groupId=${group.groupId} condition=adversarial pairType=${group.pairType} pairCounts=${JSON.stringify(gm.getPairTypeCounts())}`);
 }
 
 // ─── SOCKET.IO EVENTS ─────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ io.on("connection", (socket) => {
     const cond = condition === "adversarial" ? "adversarial" : "control";
 
     if (cond === "adversarial") {
-      const teamMap = { left: "blue", right: "red" };
+      const teamMap = { symmetrical: "blue", asymmetrical: "red" };
       const t = teamMap[team] || "blue";
       gm.addToAdversarialWaiting(socket.id, rid, t);
       console.log(`[join] rid=${rid} condition=adversarial team=${t} waiting=${JSON.stringify(gm.getAdversarialWaitingCounts())}`);
@@ -311,6 +311,7 @@ io.on("connection", (socket) => {
       io.to(p.socketId).emit("task_complete", {
         statedRule:  trimmed,
         totalTrials: group.trials.length,
+        trueRule:    RULE_LABEL,
         returnUrl,
       });
     });

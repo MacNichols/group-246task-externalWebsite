@@ -90,6 +90,7 @@
     // Complete
     completeTrials:      document.getElementById("complete-trials"),
     completeRule:        document.getElementById("complete-rule"),
+    completeTrueRule:    document.getElementById("complete-true-rule"),
     returnBtn:           document.getElementById("return-btn"),
     redirectNotice:      document.getElementById("redirect-notice"),
   };
@@ -142,7 +143,7 @@
 
       el.waitingStatus.innerHTML =
         `<span class="pulse-ring"></span>` +
-        `Left Brain <strong>${Math.min(counts.blue, 1)}/1</strong> · Right Brain <strong>${Math.min(counts.red, 1)}/1</strong> — waiting for your partner.`;
+        `Symmetrical Brainstem <strong>${Math.min(counts.blue, 1)}/1</strong> · Asymmetrical Brainstem <strong>${Math.min(counts.red, 1)}/1</strong> — waiting for your partner.`;
     } else {
       el.waitingTeamBadge.style.display = "none";
       el.dots.innerHTML = "";
@@ -206,8 +207,13 @@
   function updateActiveCountDisplay(activeCounts) {
     if (!activeCounts) return;
     if (state.condition === "adversarial") {
-      el.activeCountBadge.textContent =
-        `Left Brain ${activeCounts.blue}/1 · Right Brain ${activeCounts.red}/1`;
+      if (activeCounts.pairType === "homogeneous") {
+        const teamName = activeCounts.blueMax > 0 ? "Symmetrical Brainstem" : "Asymmetrical Brainstem";
+        el.activeCountBadge.textContent = `${teamName} ${activeCounts.total}/${activeCounts.max} active`;
+      } else {
+        el.activeCountBadge.textContent =
+          `Symmetrical ${activeCounts.blue}/${activeCounts.blueMax} · Asymmetrical ${activeCounts.red}/${activeCounts.redMax}`;
+      }
     } else {
       el.activeCountBadge.textContent = `${activeCounts.total} / ${activeCounts.max} active`;
     }
@@ -488,9 +494,10 @@
   });
 
   // ─── TASK COMPLETE ────────────────────────────────────────────────────────
-  socket.on("task_complete", ({ statedRule, totalTrials, returnUrl }) => {
-    el.completeTrials.textContent = totalTrials;
-    el.completeRule.textContent   = statedRule;
+  socket.on("task_complete", ({ statedRule, totalTrials, trueRule, returnUrl }) => {
+    el.completeTrials.textContent  = totalTrials;
+    el.completeRule.textContent    = statedRule;
+    el.completeTrueRule.textContent = trueRule || "—";
 
     if (returnUrl) {
       el.redirectNotice.textContent = "Returning you to the survey in 5 seconds…";
