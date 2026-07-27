@@ -107,17 +107,15 @@
   // ─── SESSION TIMER ────────────────────────────────────────────────────────
   let countdownInterval = null;
 
-  function startCountdown(durationMs) {
-    let remaining = durationMs;
-
+  function startCountdown(endsAt) {
     function tick() {
+      const remaining = endsAt - Date.now();
       const totalSecs = Math.max(0, Math.floor(remaining / 1000));
       const mins = Math.floor(totalSecs / 60);
       const secs = totalSecs % 60;
       el.sessionTimer.textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
       el.sessionTimer.classList.toggle("warn",   remaining <= 10 * 60 * 1000 && remaining > 5 * 60 * 1000);
       el.sessionTimer.classList.toggle("danger", remaining <= 5 * 60 * 1000);
-      remaining -= 1000;
     }
 
     tick();
@@ -178,7 +176,7 @@
   // ─── GROUP FORMED ─────────────────────────────────────────────────────────
   socket.on("group_formed", ({
     groupId, yourLabel, yourTeam, condition, participants,
-    teams, round, trials, chatLog, timerDuration, activeCounts,
+    teams, round, trials, chatLog, timerEndsAt, activeCounts,
   }) => {
     state.groupId      = groupId;
     state.yourLabel    = yourLabel;
@@ -207,7 +205,7 @@
     trials.forEach(addHistoryItem);
     chatLog.forEach((entry) => addChatMessage(entry.label, entry.message));
 
-    startCountdown(timerDuration);
+    startCountdown(timerEndsAt);
 
     showScreen("task");
     appendSystemMessage("Your group is ready. You may begin discussing.");

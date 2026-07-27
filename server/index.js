@@ -74,6 +74,8 @@ function broadcastAdversarialWaiting() {
 // ─── SESSION TIMER ────────────────────────────────────────────────────────────
 
 function startGroupTimer(group) {
+  group.timerEndsAt = Date.now() + TIMER_DURATION_MS;
+
   const warn10 = setTimeout(() => {
     io.to(group.groupId).emit("timer_warning", { minutesLeft: 10 });
     console.log(`[timer_warning] group=${group.groupId} minutesLeft=10`);
@@ -124,7 +126,7 @@ function emitControlGroupFormed(group) {
       round:         group.round,
       trials:        group.trials,
       chatLog:       group.chatLog,
-      timerDuration: TIMER_DURATION_MS,
+      timerEndsAt:   group.timerEndsAt,
       activeCounts:  gm.getActiveCountsByTeam(group),
     });
   });
@@ -155,7 +157,7 @@ function emitAdversarialGroupFormed(group) {
       round:         group.round,
       trials:        group.trials,
       chatLog:       group.chatLog,
-      timerDuration: TIMER_DURATION_MS,
+      timerEndsAt:   group.timerEndsAt,
       activeCounts:  gm.getActiveCountsByTeam(group),
     });
   });
