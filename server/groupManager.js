@@ -10,9 +10,9 @@
 const { v4: uuidv4 } = require("uuid");
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const GROUP_SIZE             = 4;   // control condition
-const ADVERSARIAL_GROUP_SIZE = 2;   // adversarial condition (1 left + 1 right)
-const MAX_ROUNDS             = 20;
+const GROUP_SIZE             = 4;         // control condition
+const ADVERSARIAL_GROUP_SIZE = 2;         // adversarial condition (1 left + 1 right)
+const TIMER_DURATION_MS      = 20 * 60 * 1000;  // 20-minute session timer
 const DROPOUT_TIMEOUT_MS     = 60000;
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
@@ -315,8 +315,6 @@ function recordTrial(group, triple, rationales, evaluationResult) {
   return entry;
 }
 
-function isAtRoundCap(group) { return group.round >= MAX_ROUNDS; }
-
 // ─── ANNOUNCE VOTING ──────────────────────────────────────────────────────────
 
 function toggleAnnounceVote(group, socketId) {
@@ -362,8 +360,15 @@ function recordAnnouncement(group, statedRule, assessment) {
 }
 
 function markComplete(group) {
-  group.status      = "complete";
-  group.completedAt = Date.now();
+  group.status            = "complete";
+  group.completedAt       = Date.now();
+  group.completionReason  = "announced";
+}
+
+function recordTimeoutCompletion(group) {
+  group.status           = "complete";
+  group.completedAt      = Date.now();
+  group.completionReason = "timeout";
 }
 
 // ─── DROPOUT HANDLING ─────────────────────────────────────────────────────────
@@ -390,13 +395,14 @@ function activeParticipantCount(group) {
 
 function exportSession(group) {
   return {
-    groupId:          group.groupId,
-    createdAt:        group.createdAt,
-    completedAt:      group.completedAt || null,
-    status:           group.status,
-    condition:        group.condition,
-    pairType:         group.pairType || null,
-    groupSize:        group.participants.length,
+    groupId:           group.groupId,
+    createdAt:         group.createdAt,
+    completedAt:       group.completedAt || null,
+    status:            group.status,
+    completionReason:  group.completionReason || null,
+    condition:         group.condition,
+    pairType:          group.pairType || null,
+    groupSize:         group.participants.length,
     participants:     group.participants.map((p) => ({
       label:         p.label,
       team:          p.team,
@@ -416,15 +422,16 @@ function exportSession(group) {
 function summaryParams(group, participantLabel) {
   const correct = group.ruleAnnouncement && !group.ruleAnnouncement.assessment.flagged;
   return new URLSearchParams({
-    task_complete:     "1",
-    participant_label: participantLabel,
-    total_trials:      group.trials.length,
-    rule_stated:       group.ruleAnnouncement
+    task_complete:      "1",
+    participant_label:  participantLabel,
+    total_trials:       group.trials.length,
+    rule_stated:        group.ruleAnnouncement
       ? encodeURIComponent(group.ruleAnnouncement.statedRule)
       : "",
-    rule_correct_flag: correct ? "1" : "0",
-    group_id:          group.groupId,
-    condition:         group.condition,
+    rule_correct_flag:  correct ? "1" : "0",
+    group_id:           group.groupId,
+    condition:          group.condition,
+    completion_reason:  group.completionReason || "unknown",
   }).toString();
 }
 
@@ -460,7 +467,6 @@ module.exports = {
   checkConsensus,
   // Trials
   recordTrial,
-  isAtRoundCap,
   // Announce voting
   toggleAnnounceVote,
   clearAnnounceVotes,
@@ -471,6 +477,7 @@ module.exports = {
   // Completion
   recordAnnouncement,
   markComplete,
+  recordTimeoutCompletion,
   // Dropout
   markDisconnected,
   activeParticipantCount,
@@ -480,5 +487,5 @@ module.exports = {
   // Constants
   GROUP_SIZE,
   ADVERSARIAL_GROUP_SIZE,
-  MAX_ROUNDS,
+  TIMER_DURATION_MS,
 };

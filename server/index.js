@@ -15,6 +15,7 @@ const path    = require("path");
 const gm                                         = require("./groupManager");
 const { evaluate, assessStatedRule, RULE_LABEL } = require("./ruleEvaluator");
 const { logSession }                             = require("./logger");
+const TIMER_DURATION_MS                          = gm.TIMER_DURATION_MS;
 
 const PORT                 = process.env.PORT || 3000;
 const QUALTRICS_RETURN_URL = process.env.QUALTRICS_RETURN_URL || "";
@@ -70,6 +71,42 @@ function broadcastAdversarialWaiting() {
   });
 }
 
+// ─── SESSION TIMER ────────────────────────────────────────────────────────────
+
+function startGroupTimer(group) {
+  const warn10 = setTimeout(() => {
+    io.to(group.groupId).emit("timer_warning", { minutesLeft: 10 });
+    console.log(`[timer_warning] group=${group.groupId} minutesLeft=10`);
+  }, TIMER_DURATION_MS - 10 * 60 * 1000);
+
+  const warn5 = setTimeout(() => {
+    io.to(group.groupId).emit("timer_warning", { minutesLeft: 5 });
+    console.log(`[timer_warning] group=${group.groupId} minutesLeft=5`);
+  }, TIMER_DURATION_MS - 5 * 60 * 1000);
+
+  const timeout = setTimeout(() => {
+    if (group.status !== "active") return;
+    gm.clearAllSubmissions(group);
+    gm.recordTimeoutCompletion(group);
+    const session = gm.exportSession(group);
+    logSession(session);
+    console.log(`[timeout] group=${group.groupId} trials=${group.trials.length}`);
+    group.participants.forEach((p) => {
+      const params    = gm.summaryParams(group, p.label);
+      const returnUrl = QUALTRICS_RETURN_URL ? `${QUALTRICS_RETURN_URL}?${params}` : null;
+      io.to(p.socketId).emit("task_complete", {
+        statedRule:       "",
+        totalTrials:      group.trials.length,
+        trueRule:         RULE_LABEL,
+        completionReason: "timeout",
+        returnUrl,
+      });
+    });
+  }, TIMER_DURATION_MS);
+
+  group.timerRefs = [warn10, warn5, timeout];
+}
+
 function emitControlGroupFormed(group) {
   group.participants.forEach((p) => {
     const s = io.sockets.sockets.get(p.socketId);
@@ -78,20 +115,21 @@ function emitControlGroupFormed(group) {
 
   group.participants.forEach((p) => {
     io.to(p.socketId).emit("group_formed", {
-      groupId:      group.groupId,
-      yourLabel:    p.label,
-      yourTeam:     null,
-      condition:    "control",
-      participants: group.participants.map((x) => x.label),
-      teams:        null,
-      round:        group.round,
-      trials:       group.trials,
-      chatLog:      group.chatLog,
-      maxRounds:    gm.MAX_ROUNDS,
-      activeCounts: gm.getActiveCountsByTeam(group),
+      groupId:       group.groupId,
+      yourLabel:     p.label,
+      yourTeam:      null,
+      condition:     "control",
+      participants:  group.participants.map((x) => x.label),
+      teams:         null,
+      round:         group.round,
+      trials:        group.trials,
+      chatLog:       group.chatLog,
+      timerDuration: TIMER_DURATION_MS,
+      activeCounts:  gm.getActiveCountsByTeam(group),
     });
   });
 
+  startGroupTimer(group);
   console.log(`[group_formed] groupId=${group.groupId} condition=control`);
 }
 
@@ -108,20 +146,21 @@ function emitAdversarialGroupFormed(group) {
 
   group.participants.forEach((p) => {
     io.to(p.socketId).emit("group_formed", {
-      groupId:      group.groupId,
-      yourLabel:    p.label,
-      yourTeam:     p.team,
-      condition:    "adversarial",
-      participants: group.participants.map((x) => x.label),
-      teams:        teamLabels,
-      round:        group.round,
-      trials:       group.trials,
-      chatLog:      group.chatLog,
-      maxRounds:    gm.MAX_ROUNDS,
-      activeCounts: gm.getActiveCountsByTeam(group),
+      groupId:       group.groupId,
+      yourLabel:     p.label,
+      yourTeam:      p.team,
+      condition:     "adversarial",
+      participants:  group.participants.map((x) => x.label),
+      teams:         teamLabels,
+      round:         group.round,
+      trials:        group.trials,
+      chatLog:       group.chatLog,
+      timerDuration: TIMER_DURATION_MS,
+      activeCounts:  gm.getActiveCountsByTeam(group),
     });
   });
 
+  startGroupTimer(group);
   console.log(`[group_formed] groupId=${group.groupId} condition=adversarial pairType=${group.pairType} pairCounts=${JSON.stringify(gm.getPairTypeCounts())}`);
 }
 
@@ -177,7 +216,6 @@ io.on("connection", (socket) => {
   socket.on("submit_triple", ({ a, b, c, rationale } = {}) => {
     const group = gm.getGroupBySocket(socket.id);
     if (!group || group.status !== "active") return;
-    if (gm.isAtRoundCap(group)) return;
 
     const participant = gm.getParticipant(group, socket.id);
     if (!participant) return;
@@ -242,7 +280,6 @@ io.on("connection", (socket) => {
       triple:       trial.triple,
       verdict:      trial.verdict,
       conforms:     trial.conforms,
-      atCap:        gm.isAtRoundCap(group),
       activeCounts: gm.getActiveCountsByTeam(group),
     });
   });
@@ -294,6 +331,12 @@ io.on("connection", (socket) => {
 
     gm.clearAnnounceVotes(group);
 
+    // Cancel session timer
+    if (group.timerRefs) {
+      group.timerRefs.forEach((ref) => clearTimeout(ref));
+      group.timerRefs = [];
+    }
+
     const trimmed    = statedRule.trim().slice(0, 300);
     const assessment = assessStatedRule(trimmed);
 
@@ -309,9 +352,10 @@ io.on("connection", (socket) => {
       const params    = gm.summaryParams(group, p.label);
       const returnUrl = QUALTRICS_RETURN_URL ? `${QUALTRICS_RETURN_URL}?${params}` : null;
       io.to(p.socketId).emit("task_complete", {
-        statedRule:  trimmed,
-        totalTrials: group.trials.length,
-        trueRule:    RULE_LABEL,
+        statedRule:       trimmed,
+        totalTrials:      group.trials.length,
+        trueRule:         RULE_LABEL,
+        completionReason: "announced",
         returnUrl,
       });
     });
@@ -356,5 +400,5 @@ io.on("connection", (socket) => {
 server.listen(PORT, () => {
   console.log(`\n2-4-6 Task Server running on http://localhost:${PORT}`);
   console.log(`Rule in effect: "${RULE_LABEL}"`);
-  console.log(`Control group size: ${gm.GROUP_SIZE} | Adversarial pair size: ${gm.ADVERSARIAL_GROUP_SIZE} | Max rounds: ${gm.MAX_ROUNDS}\n`);
+  console.log(`Control group size: ${gm.GROUP_SIZE} | Adversarial pair size: ${gm.ADVERSARIAL_GROUP_SIZE} | Session timer: ${TIMER_DURATION_MS / 60000} min\n`);
 });

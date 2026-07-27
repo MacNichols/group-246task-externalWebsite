@@ -16,12 +16,6 @@
 
 <div id="app">
 
-  <!-- ── GLOBAL HEADER ─────────────────────────────────────────────────── -->
-  <header class="app-header">
-    <span class="wordmark">2-4-6 Task</span>
-    <span class="session-info" id="session-label"></span>
-  </header>
-
   <!-- ── WAITING SCREEN ────────────────────────────────────────────────── -->
   <section class="screen active" id="screen-waiting">
     <div class="waiting-card">
@@ -43,7 +37,7 @@
     <!-- Top bar: task description + meta badges -->
     <div class="task-top">
       <div class="task-top-left">
-        <h2>Hypothesis Testing Task</h2>
+        <h2>Guessing Game</h2>
         <div class="team-assignment-indicator" id="team-assignment-indicator" style="display:none;"></div>
         <p class="task-rule-prompt">
           The triple <strong>2, 4, 6</strong> follows a rule.
@@ -59,15 +53,10 @@
         </details>
       </div>
       <div class="task-meta">
-        <span class="badge" id="round-badge">Trial 0 / 20</span>
         <span class="badge" id="your-label-badge">—</span>
         <span class="badge" id="active-count-badge" style="display:none;"></span>
-        <span class="team-badge" id="team-badge" style="display:none;"></span>
       </div>
     </div>
-
-    <!-- Turn indicator (adversarial only) -->
-    <div class="turn-indicator" id="turn-indicator" style="display:none;"></div>
 
     <!-- Feedback banner: last verdict -->
     <div class="feedback-banner" id="feedback-banner">
@@ -87,6 +76,7 @@
         <div class="history-list" id="history-list">
           <div class="history-empty">No trials yet.</div>
         </div>
+        <div class="session-timer" id="session-timer">—:——</div>
       </aside>
 
       <!-- Chat panel -->
@@ -109,39 +99,52 @@
             <button class="btn-secondary" id="chat-send-btn">Send</button>
           </div>
 
-          <!-- Triple submission -->
+          <!-- Triple submission: left panel (propose) + right panel (announce) -->
           <div class="triple-submit-area">
-            <div class="triple-submit-top">
-              <div class="triple-submit-left">
-                <label>Propose a triple</label>
-                <div class="triple-inputs">
-                  <input type="number" id="triple-a" placeholder="a" />
-                  <span class="sep">,</span>
-                  <input type="number" id="triple-b" placeholder="b" />
-                  <span class="sep">,</span>
-                  <input type="number" id="triple-c" placeholder="c" />
-                </div>
+
+            <!-- Left: propose a triple -->
+            <div class="triple-left-panel">
+              <label
+                data-tooltip="Enter three integers and explain your reasoning below"
+              >Propose a triple</label>
+              <div class="triple-inputs">
+                <input type="number" id="triple-a" placeholder="a" />
+                <span class="sep">,</span>
+                <input type="number" id="triple-b" placeholder="b" />
+                <span class="sep">,</span>
+                <input type="number" id="triple-c" placeholder="c" />
               </div>
-              <div class="triple-submit-actions">
-                <button class="btn-primary btn-sm" id="triple-submit-btn">
-                  Submit triple
-                </button>
-                <button class="btn-danger btn-sm" id="announce-btn">
-                  Announce rule
-                </button>
-                <div class="announce-ready-status" id="announce-ready-status" style="display:none;"></div>
+              <div class="rationale-row">
+                <label for="rationale-input">Your reason for this triple</label>
+                <textarea
+                  id="rationale-input"
+                  placeholder="Tell us what your working hypothesis about what the rule is"
+                  maxlength="1000"
+                  rows="2"
+                ></textarea>
               </div>
+              <div class="submission-status" id="submission-status" style="display:none;"></div>
+              <button
+                class="btn-primary btn-sm"
+                id="triple-submit-btn"
+                data-tooltip="Submit this triple to your group for testing against the rule"
+              >Submit triple</button>
             </div>
-            <div class="rationale-row">
-              <label for="rationale-input">Your reason for this triple</label>
-              <textarea
-                id="rationale-input"
-                placeholder="Briefly explain why your group is proposing this triple…"
-                maxlength="1000"
-                rows="2"
-              ></textarea>
+
+            <!-- Divider -->
+            <div class="triple-panel-divider"></div>
+
+            <!-- Right: announce rule -->
+            <div class="triple-right-panel">
+              <button
+                class="btn-danger"
+                id="announce-btn"
+                data-tooltip="End the session by announcing the rule your group has discovered"
+              >Announce rule</button>
+              <p class="announce-note">Only announce when your whole group is confident and agrees on the rule to announce</p>
+              <div class="announce-ready-status" id="announce-ready-status" style="display:none;"></div>
             </div>
-            <div class="submission-status" id="submission-status" style="display:none;"></div>
+
           </div>
 
         </div>

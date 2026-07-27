@@ -3,8 +3,8 @@
  *
  * Supports two conditions passed via URL params:
  *   control     — ?rid=...
- *   adversarial — ?rid=...&condition=adversarial&team=blue|red
- *                 ("blue" = Left Brain, "red" = Right Brain)
+ *   adversarial — ?rid=...&condition=adversarial&team=symmetrical|asymmetrical
+ *                 ("blue" = Symmetrical Brainstem, "red" = Asymmetrical Brainstem)
  */
 
 (function () {
@@ -25,7 +25,6 @@
     participants:        [],
     teams:               null,   // { blue: [labels], red: [labels] }
     round:               0,
-    maxRounds:           20,
     connected:           false,
     isReadyToAnnounce:   false,
     waitingForAnnouncer: false,
@@ -47,23 +46,16 @@
     dots:                document.getElementById("dots"),
     waitingStatus:       document.getElementById("waiting-status"),
 
-    // Header
-    sessionLabel:        document.getElementById("session-label"),
-
     // Task top
-    roundBadge:          document.getElementById("round-badge"),
     yourLabelBadge:      document.getElementById("your-label-badge"),
     activeCountBadge:    document.getElementById("active-count-badge"),
-    teamBadge:           document.getElementById("team-badge"),
-
-    // Turn indicator
-    turnIndicator:       document.getElementById("turn-indicator"),
 
     // Feedback banner
     feedbackBanner:      document.getElementById("feedback-banner"),
 
-    // History
+    // History + timer
     historyList:              document.getElementById("history-list"),
+    sessionTimer:             document.getElementById("session-timer"),
     teamAssignmentIndicator:  document.getElementById("team-assignment-indicator"),
 
     // Chat
@@ -110,11 +102,35 @@
     state.yourTeam     = params.get("team") || null;
 
     showScreen("waiting");
-
-    if (state.qualtricsRid !== "unknown") {
-      el.sessionLabel.textContent = `ID: ${state.qualtricsRid}`;
-    }
   }
+
+  // ─── SESSION TIMER ────────────────────────────────────────────────────────
+  let countdownInterval = null;
+
+  function startCountdown(durationMs) {
+    let remaining = durationMs;
+
+    function tick() {
+      const totalSecs = Math.max(0, Math.floor(remaining / 1000));
+      const mins = Math.floor(totalSecs / 60);
+      const secs = totalSecs % 60;
+      el.sessionTimer.textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+      el.sessionTimer.classList.toggle("warn",   remaining <= 10 * 60 * 1000 && remaining > 5 * 60 * 1000);
+      el.sessionTimer.classList.toggle("danger", remaining <= 5 * 60 * 1000);
+      remaining -= 1000;
+    }
+
+    tick();
+    countdownInterval = setInterval(tick, 1000);
+  }
+
+  function stopCountdown() {
+    if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+  }
+
+  socket.on("timer_warning", ({ minutesLeft }) => {
+    appendSystemMessage(`⏱ ${minutesLeft} minutes remaining.`);
+  });
 
   // ─── WAITING ROOM ─────────────────────────────────────────────────────────
   socket.on("waiting_update", ({ condition, count, needed, counts, team }) => {
@@ -162,7 +178,7 @@
   // ─── GROUP FORMED ─────────────────────────────────────────────────────────
   socket.on("group_formed", ({
     groupId, yourLabel, yourTeam, condition, participants,
-    teams, round, trials, chatLog, maxRounds, activeCounts,
+    teams, round, trials, chatLog, timerDuration, activeCounts,
   }) => {
     state.groupId      = groupId;
     state.yourLabel    = yourLabel;
@@ -171,15 +187,12 @@
     state.participants = participants;
     state.teams        = teams;
     state.round        = round;
-    state.maxRounds    = maxRounds;
 
     el.yourLabelBadge.textContent = yourLabel;
-    el.roundBadge.textContent     = `Trial ${round} / ${maxRounds}`;
 
     updateActiveCountDisplay(activeCounts);
 
     if (condition === "adversarial") {
-      renderTeamBadge(yourTeam);
       el.teamAssignmentIndicator.textContent =
         (yourTeam === "blue"
           ? "You have a symmetrical brainstem. "
@@ -189,8 +202,12 @@
       el.teamAssignmentIndicator.style.display = "block";
     }
 
+    // Pre-populate history with the starting 2,4,6 → Yes cue (display only)
+    addHistoryItem({ round: "·", triple: { a: 2, b: 4, c: 6 }, verdict: "Yes", conforms: true });
     trials.forEach(addHistoryItem);
     chatLog.forEach((entry) => addChatMessage(entry.label, entry.message));
+
+    startCountdown(timerDuration);
 
     showScreen("task");
     appendSystemMessage("Your group is ready. You may begin discussing.");
@@ -198,12 +215,6 @@
   });
 
   // ─── TEAM UI ──────────────────────────────────────────────────────────────
-  function renderTeamBadge(team) {
-    el.teamBadge.textContent   = teamDisplayName(team);
-    el.teamBadge.className     = "team-badge team-badge-" + team;
-    el.teamBadge.style.display = "inline-flex";
-  }
-
   function updateActiveCountDisplay(activeCounts) {
     if (!activeCounts) return;
     if (state.condition === "adversarial") {
@@ -368,9 +379,8 @@
     showSubmissionStatus("error", message);
   });
 
-  socket.on("trial_result", ({ round, triple, verdict, conforms, atCap, activeCounts }) => {
+  socket.on("trial_result", ({ round, triple, verdict, conforms, activeCounts }) => {
     state.round = round;
-    el.roundBadge.textContent = `Trial ${round} / ${state.maxRounds}`;
 
     resetSubmissionForm();
 
@@ -388,11 +398,6 @@
       ? `✓ ${triple.a}, ${triple.b}, ${triple.c} → Yes`
       : `✗ ${triple.a}, ${triple.b}, ${triple.c} → No`;
     appendSystemMessage(msg);
-
-    if (atCap) {
-      appendSystemMessage("You have reached the maximum number of trials. Please announce your rule.");
-      setSubmitLocked(true);
-    }
   });
 
   function addHistoryItem({ round, triple, verdict, conforms }) {
@@ -427,7 +432,7 @@
     state.isReadyToAnnounce   = false;
     state.waitingForAnnouncer = false;
     el.announceBtn.textContent = "Announce rule";
-    el.announceBtn.className   = "btn-danger btn-sm";
+    el.announceBtn.className   = "btn-danger";
     el.announceBtn.disabled    = false;
     el.announceReadyStatus.style.display = "none";
     el.announceReadyStatus.textContent   = "";
@@ -441,7 +446,7 @@
   socket.on("announce_ready_update", ({ readyLabels, readyCount, needed }) => {
     state.isReadyToAnnounce    = readyLabels.includes(state.yourLabel);
     el.announceBtn.textContent = state.isReadyToAnnounce ? "Cancel readiness" : "Announce rule";
-    el.announceBtn.className   = state.isReadyToAnnounce ? "btn-secondary btn-sm" : "btn-danger btn-sm";
+    el.announceBtn.className   = state.isReadyToAnnounce ? "btn-secondary" : "btn-danger";
 
     if (readyCount > 0) {
       el.announceReadyStatus.textContent   = `${readyCount} / ${needed} ready to announce`;
@@ -494,9 +499,11 @@
   });
 
   // ─── TASK COMPLETE ────────────────────────────────────────────────────────
-  socket.on("task_complete", ({ statedRule, totalTrials, trueRule, returnUrl }) => {
-    el.completeTrials.textContent  = totalTrials;
-    el.completeRule.textContent    = statedRule;
+  socket.on("task_complete", ({ statedRule, totalTrials, trueRule, completionReason, returnUrl }) => {
+    stopCountdown();
+
+    el.completeTrials.textContent   = totalTrials;
+    el.completeRule.textContent     = completionReason === "timeout" ? "—" : (statedRule || "—");
     el.completeTrueRule.textContent = trueRule || "—";
 
     if (returnUrl) {
