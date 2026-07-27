@@ -115,6 +115,8 @@ function emitControlGroupFormed(group) {
     if (s) s.join(group.groupId);
   });
 
+  startGroupTimer(group);
+
   group.participants.forEach((p) => {
     io.to(p.socketId).emit("group_formed", {
       groupId:       group.groupId,
@@ -131,7 +133,6 @@ function emitControlGroupFormed(group) {
     });
   });
 
-  startGroupTimer(group);
   console.log(`[group_formed] groupId=${group.groupId} condition=control`);
 }
 
@@ -145,6 +146,8 @@ function emitAdversarialGroupFormed(group) {
     blue: group.participants.filter((x) => group.teams.blue.includes(x.socketId)).map((x) => x.label),
     red:  group.participants.filter((x) => group.teams.red.includes(x.socketId)).map((x) => x.label),
   };
+
+  startGroupTimer(group);
 
   group.participants.forEach((p) => {
     io.to(p.socketId).emit("group_formed", {
@@ -162,7 +165,6 @@ function emitAdversarialGroupFormed(group) {
     });
   });
 
-  startGroupTimer(group);
   console.log(`[group_formed] groupId=${group.groupId} condition=adversarial pairType=${group.pairType} pairCounts=${JSON.stringify(gm.getPairTypeCounts())}`);
 }
 
