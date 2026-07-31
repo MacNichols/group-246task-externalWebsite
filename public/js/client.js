@@ -191,11 +191,9 @@
     updateActiveCountDisplay(activeCounts);
 
     if (condition === "adversarial") {
-      el.teamAssignmentIndicator.textContent =
-        (yourTeam === "blue"
-          ? "You have a symmetrical brainstem. "
-          : "You have an asymmetrical brainstem. ") +
-        `Symmetrical brainstem individuals are more likely to succeed on this task than asymmetrical brainstem individuals.`;
+      el.teamAssignmentIndicator.textContent = yourTeam === "blue"
+        ? "You have a symmetrical brainstem. Symmetrical brainstem individuals are more likely to succeed in this game than asymmetrical brainstem individuals."
+        : "You have an asymmetrical brainstem. Asymmetrical brainstem individuals are less likely to succeed on this game than symmetrical brainstem individuals.";
       el.teamAssignmentIndicator.className     = "team-assignment-indicator team-badge-" + yourTeam;
       el.teamAssignmentIndicator.style.display = "block";
     }
@@ -208,7 +206,11 @@
     startCountdown(timerEndsAt);
 
     showScreen("task");
-    appendSystemMessage("Your group is ready. You may begin discussing.");
+    appendSystemMessage(
+      condition === "adversarial"
+        ? "You and your partner have both joined the game! You can talk to each other via this chat window."
+        : "Your group is ready. You may begin discussing."
+    );
     el.chatInput.focus();
   });
 
@@ -366,10 +368,13 @@
     );
   });
 
-  socket.on("submission_mismatch", ({ message }) => {
+  socket.on("submission_mismatch", () => {
+    const msg = state.condition === "adversarial"
+      ? "You and your partner submitted different triples. Please discuss and ensure everyone submits the same triple."
+      : "Your group submitted different triples. Please discuss and ensure everyone submits the same triple.";
     resetSubmissionForm();
-    showSubmissionStatus("mismatch", message);
-    appendSystemMessage("⚠ " + message);
+    showSubmissionStatus("mismatch", msg);
+    appendSystemMessage("⚠ " + msg);
   });
 
   socket.on("submission_error", ({ message }) => {
@@ -392,10 +397,10 @@
 
     addHistoryItem({ round, triple, verdict, conforms });
 
-    const msg = verdict === "Yes"
-      ? `✓ ${triple.a}, ${triple.b}, ${triple.c} → Yes`
-      : `✗ ${triple.a}, ${triple.b}, ${triple.c} → No`;
-    appendSystemMessage(msg);
+    const conformsText = conforms
+      ? "This triple conforms to the rule"
+      : "This triple does not conform to the rule";
+    appendSystemMessage(`${triple.a}, ${triple.b}, ${triple.c} — ${conformsText}`);
   });
 
   function addHistoryItem({ round, triple, verdict, conforms }) {
@@ -458,6 +463,7 @@
     state.waitingForAnnouncer            = true;
     el.announceReadyStatus.style.display = "none";
     el.announceConfirm.disabled          = false;
+    appendSystemMessage(`You are ready to announce the rule. ${state.yourLabel} has been chosen to state the rule.`);
     el.announceModal.classList.add("open");
     el.announceText.focus();
   });
@@ -466,7 +472,7 @@
     state.waitingForAnnouncer            = true;
     el.announceBtn.disabled              = true;
     el.announceReadyStatus.style.display = "none";
-    appendSystemMessage(`Majority reached! ${announcerLabel} has been chosen to state the rule.`);
+    appendSystemMessage(`You are ready to announce the rule. ${announcerLabel} has been chosen to state the rule.`);
   });
 
   socket.on("announce_ready_reset", () => {

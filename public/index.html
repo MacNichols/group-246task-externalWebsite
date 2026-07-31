@@ -40,15 +40,19 @@
         <h2>Guessing Game</h2>
         <div class="team-assignment-indicator" id="team-assignment-indicator" style="display:none;"></div>
         <p class="task-rule-prompt">
-          The triple <strong>2, 4, 6</strong> follows a rule.
-          Propose triples to test your hypothesis, then announce the rule when your group is confident.
+          The triple <strong>2, 4, 6</strong> conforms to a simple rule that we have in mind. Your job is to find out what the rule is by proposing additional triples and learning whether or not they also conform to the rule.
         </p>
         <details class="task-instructions">
           <summary>Click here for full directions</summary>
           <div class="task-instructions-body">
-            Your aim is to discover this rule by writing down additional sets of three integers, together with reasons for your choice of them. Remember that your aim is not simply to find sets of three integers which conform to the rule, but to discover the rule itself! When your team feels highly confident that you have discovered it, and not before, you should click the "Announce rule" button, which can be seen in a white box in the lower right hand corner.
+            The rule we have in mind is concerned with a relation between any three integers and not with their absolute magnitude, i.e. it is not a rule like all integers above (or below) 50, etc.
+            Your aim is to discover the rule by agreeing with your partner on additional sets of three integers to write down. After you write down such a triple, we shall tell you whether or not it conforms to the rule. Remember that your aim is not simply to find triples which conform to the rule, but to discover the rule itself!
             <br><br>
-            As a team, you have to agree on each set of three numbers to write down, but you do not necessarily have to have the same reasons for agreeing to this choice. After everyone agrees on the triplet to submit, you will receive feedback indicating whether or not the triplet you entered does or doesn't conform to the rule. Good luck!
+            When you and your partner feel highly confident that you know what the rule is, and not before, you are to click the "announce rule" button. You will only have one chance to guess the rule!
+            <br><br>
+            Please note that every time you write down a triple, you will also be asked to state your working hypothesis as to what the rule might be. This does not equal to trying to guess the rule and it is only needed so that we can keep track of your thought processes along the way.
+            <br><br>
+            You have 20 minutes to find out what the rule is, but there is no limit on how many triplets you can test. Good luck!
           </div>
         </details>
       </div>
@@ -92,7 +96,7 @@
             <input
               type="text"
               id="chat-input"
-              placeholder="Type a message…"
+              placeholder="Type a message to your partner…"
               autocomplete="off"
               maxlength="500"
             />
@@ -104,9 +108,7 @@
 
             <!-- Left: propose a triple -->
             <div class="triple-left-panel">
-              <label
-                data-tooltip="Enter three integers and explain your reasoning below"
-              >Propose a triple</label>
+              <label>Propose a triple</label>
               <div class="triple-inputs">
                 <input type="number" id="triple-a" placeholder="a" />
                 <span class="sep">,</span>
@@ -116,14 +118,14 @@
                 <button
                   class="btn-primary btn-sm"
                   id="triple-submit-btn"
-                  data-tooltip="Submit this triple to your group for testing against the rule"
+                  data-tooltip="Submit this triple for testing against the rule."
                 >Submit triple</button>
               </div>
               <div class="rationale-row">
-                <label for="rationale-input">Your reason for this triple</label>
+                <label for="rationale-input">Your working hypothesis</label>
                 <textarea
                   id="rationale-input"
-                  placeholder="Tell us what your working hypothesis about what the rule is"
+                  placeholder="Tell us your working hypothesis about what the rule is at this point in the game"
                   maxlength="1000"
                   rows="2"
                 ></textarea>
@@ -139,9 +141,8 @@
               <button
                 class="btn-danger"
                 id="announce-btn"
-                data-tooltip="End the session by announcing the rule your group has discovered"
               >Announce rule</button>
-              <p class="announce-note">Only announce when your whole group is confident and agrees on the rule to announce</p>
+              <p class="announce-note">Guessing the rule will end the game. Only announce when you and your partner are both highly confident and agree on what the rule is.</p>
               <div class="announce-ready-status" id="announce-ready-status" style="display:none;"></div>
             </div>
 
